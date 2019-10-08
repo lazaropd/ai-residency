@@ -1,4 +1,5 @@
 # ai-residency
+#### TESTE FORK AND COMMIT
 
 ## Como sincronizar o GitHub e a pasta local
 
@@ -16,3 +17,8 @@ Vai pedir a senha do GitHub e depois sincronizar todos os arquivos para a nuvem.
 
 Importante: pastas vazias não são sincronizadas, então caso necessário, colocar um arquivo qualquer em cada pasta antes de executar a rotina acima.
 
+Lucas HUB
+Greg wants to build a string, S of length N. Starting with an empty string, he can perform 2 operations:
+1. Add a character to the end of S for A dollars.
+2. Copy any substring of S, and then add it to the end of S for B dollars.
+Calculate minimum amount of money Greg needs to build S.
