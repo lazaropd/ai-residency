@@ -36,10 +36,3 @@ _36y, married to Alline, father of José Ricardo, 10+y of experience in high man
 
 
 **Projects:** coding practices in C (2002 a 2003), 3D molecule visualization software using C++ (2006), control charts and data analysis using Matlab (2007), PHP/MySQL software for QC laboratory management (2009), PCR/MLR/PLSR modeling using NIR spectroscopy for characterization of agricultural products (2011), multiple enterprise applications using VBA for Excel (2007-2018), RPA application using MS Forms/Sharepoint/Flow/PowerApps/PowerBI (2018), PowerBI solutions using R/Python (2019), data analysis, time series analysis, MLR/LR/KNN regression and ggplot in R (2019), data mining using chromedriver/selenium/bs4 (2019), LR/KNN/DNN modeling using sklearn/keras/tensorflow to predict matches results and bet in real CSGO matches (2019), application of CNN using keras/tensorflow for soybean disease and pest classification (2019)
-
-<<<<<<< HEAD
-Sílvio
-=======
-
-
->>>>>>> c80c4d0f37c0fd3ce03b50b1afba7f0af5db09a2
