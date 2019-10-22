@@ -153,7 +153,7 @@ texto1.limpar_texto(texto1.conteudo, False)
 texto1.ler_stopwords(idioma, False)
 texto1.reescrever_texto(texto1.conteudo_limpo) 
 
-texto2 = LerTexto(url3, False)
+texto2 = LerTexto(url4, False)
 texto2.limpar_texto(texto2.conteudo, False)
 texto2.ler_stopwords(idioma, False)
 texto2.reescrever_texto(texto2.conteudo_limpo) 
