@@ -124,7 +124,7 @@ class CompararTexto:
         else:
             print("O método informado não está implementado!")  
         if was_found:
-            print("A similaridade entre os 2 textos informados é de %.2f %%" % similaridade)
+            print("A similaridade pelo método %s entre os 2 textos informados é de %.2f %%" % (metodo, similaridade))
 
 
 url1 = "https://ocw.mit.edu/ans7870/6/6.006/s08/lecturenotes/files/t8.shakespeare.txt"
