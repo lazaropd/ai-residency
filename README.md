@@ -43,9 +43,13 @@ _36y, married to Alline, father of José Ricardo, 10+y of experience in high man
 
 ## Artificial Intelligence Residency Program
 
+<br> 
+
 The **main objective of the AI HUB Senai Londrina** is to promote the adoption of this technology by the Brazilian industry in its different domains. The AI Hub is located in the Londrina-Maringá axis, in southern Brazil, where a concentration of over 2000 IT companies, highly qualified professionals and well positioned universities interact in an innovative way to bring solutions to real world problems.
 
 The Residency Program has 20 postgraduate students from the fields of engineering, computing, mathematics and physics and aims to meet the demands of the program's funding companies.
+
+<br> 
 
 **The applied projects include the following areas of Data Science and AI:**
 
