@@ -8,18 +8,12 @@ from IPython.display import Markdown
 from opencage.geocoder import OpenCageGeocode
 
 
-TAXONOMY_COLUMNS = ['Filo', 'Classe', 'Ordem', 'Familia', 'Genero', 'Especie']
-LOCATION_COORDINATES = ['Pais', 'Estado/Provincia', 'Municipio', 'Latitude', 'Longitude']
-
-
-key = '09aadb1b1d8840acacfa0fcece0acb13'
-geocoder = OpenCageGeocode(key)
-
-
 class getBiodiversity():
 
     def __init__(self, url):
         self.url = url
+        self.geocoder = OpenCageGeocode(key)
+
         try:
             self.df_data = pd.read_csv(url, sep=';', header=0, encoding='utf-8')
         except Exception as e:
@@ -44,8 +38,8 @@ class getBiodiversity():
         filled_columns = [column for column in columns if (column != "Sem Informações")]
         return 'NA' if len(filled_columns) == 0 else TAXONOMY_COLUMNS[len(filled_columns)-1]
     
-    def addTaxonomicLevel(self, col_name):
-        self.df_data[col_name] = self.df_data[TAXONOMY_COLUMNS].apply(lambda x: self.getLastFilled(x), axis=1)
+    def addTaxonomicLevel(self, col_name, taxonomy_columns):
+        self.df_data[col_name] = self.df_data[taxonomy_columns].apply(lambda x: self.getLastFilled(x), axis=1)
         self.df_taxonomy_info =  self.df_data[col_name].value_counts()
         return None
 
@@ -53,9 +47,9 @@ class getBiodiversity():
         self.df_taxonomy = self.df_data[columns]
         return None
     
-    def getTaxonomy(self, col_name='taxonomic_level'):
-        self.addTaxonomicLevel(col_name)
-        self.extractTaxonomy(TAXONOMY_COLUMNS+[col_name])
+    def getTaxonomy(self, col_name='taxonomic_level', taxonomy_columns):
+        self.addTaxonomicLevel(col_name, taxonomy_columns)
+        self.extractTaxonomy(taxonomy_columns+[col_name])
         return None
     
     def filterFields(self, columns, values):

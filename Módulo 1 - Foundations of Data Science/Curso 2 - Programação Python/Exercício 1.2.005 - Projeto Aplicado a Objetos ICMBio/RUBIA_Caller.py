@@ -3,6 +3,13 @@ from importlib import reload
 import RUBIA; reload(RUBIA)
 
 
+LOCATION_COORDINATES = ['Pais', 'Estado/Provincia', 'Municipio', 'Latitude', 'Longitude']
+
+
+
+key = '09aadb1b1d8840acacfa0fcece0acb13'
+
+
 LOCATION_SAMPLING = 10 # number of locations to check and plot in the map
 
 url = "portalbio_export_16-10-2019-14-39-54.csv"
@@ -27,7 +34,8 @@ biodiversity = RUBIA.getBiodiversity(url)
 biodiversity.checkEmpty()
 
 # check for taxonomic available info and add it to the dataframe
-biodiversity.getTaxonomy(col_name='Nível Taxonômico')
+taxonomy_columns = ['Filo', 'Classe', 'Ordem', 'Familia', 'Genero', 'Especie']
+biodiversity.getTaxonomy(col_name='Nível Taxonômico', taxonomy_columns)
 
 # apply filters and return a filtered dataframe
 filter_columns = ['Municipio','Filo']
