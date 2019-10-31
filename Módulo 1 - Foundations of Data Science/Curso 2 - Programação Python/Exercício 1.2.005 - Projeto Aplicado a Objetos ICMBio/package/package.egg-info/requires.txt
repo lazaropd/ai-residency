@@ -1,0 +1,6 @@
+pandas
+numpy
+streamlit
+folium
+statistics
+opencage.geocoder
