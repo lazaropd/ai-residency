@@ -22,6 +22,7 @@ class getBiodiversity():
         self.geocoder = OpenCageGeocode(key)
         self.TAXONOMY_COLUMNS = taxonomy_columns
         self.LOCATION_COORDINATES = location_columns
+
         try:
             self.df_data = pd.read_csv(url, sep=';', header=0, encoding='utf-8')
         except Exception as e:
