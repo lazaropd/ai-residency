@@ -1,6 +1,6 @@
-;data;descricao;responsavel;produtos;titulo;status
-0;02/11/2019;Teste comparativo Laranja e Uva;Fulano;Produto 1|Produto 2;Experimento 1;Encerrado
-1;02/11/2019;Comparação principais concorrentes do néctar pêssego;Ciclano;Produto 1|Produto 2;Experimento Néctar;Aberto
-2;06/11/2019;Redução de açúcar proporção 5, 10 e 20%;Beltrano;Produto A|Produto N;Redução de Açúcar Maçã;Cancelado
-3;06/11/2019;Redução de açúcar proporção 5, 10 e 20%;Beltrano;Produto A|Produto N;Redução de Açúcar Goiaba;Aberto
+cur_ID;data;descricao;responsavel;produtos;titulo;status
+0;2019-11-02;Teste comparativo Laranja e Uva;Fulano;Produto 1|Produto 2;Experimento 1;Encerrado
+1;2019-11-02;Comparação principais concorrentes do néctar pêssego;Ciclano;Produto 1|Produto 2;Experimento Néctar;Aberto
+2;2019-11-02;Redução de açúcar proporção 5, 10 e 20%;Beltrano;Produto A|Produto N;Redução de Açúcar Maçã;Cancelado
+3;2019-11-04;Redução de açúcar proporção 5, 10 e 20%;Beltrano;Produto A|Produto N;Redução de Açúcar Goiaba;Aberto
 4;2019-11-04;Teste das 5 principais marcas do mercado, amargo 65%;Fulano;Garoto|Nestlé|Lindt|Cacau Show|Brasil Cacau;Teste marcas de chocolate;Aberto
