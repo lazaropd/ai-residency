@@ -174,9 +174,12 @@ if app == "Provador Oficial":
             novo_registro = pd.DataFrame(novo_registro).T
             experimentos = pd.concat([experimentos, novo_registro], ignore_index=True)
             st.write(experimentos)
-            if st.button("SALVAR"):
-                experimentos.to_csv(experimentos_file, sep=";", header=True)
-    
+            if data == "" or descricao == "" or responsavel == "" or produtos == "" or titulo == "":
+                st.warning("Todos os campos são obrigatórios")
+            else:
+                if st.button("SALVAR"):
+                    experimentos.to_csv(experimentos_file, sep=";", header=True)
+        
 
     if rotina == "Formulário de análise":
         st.title("Formulário de análise")
