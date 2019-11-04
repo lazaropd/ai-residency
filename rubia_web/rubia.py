@@ -6,7 +6,7 @@ from random import randint, random
 from urllib.request import urlopen
 
 
-app = st.sidebar.radio("Application:", ("Rubia Photoshop", "Provador Oficial"))
+app = st.sidebar.radio("Application:", ("Provador Oficial", "Rubia Photoshop"))
 
 
 
@@ -138,7 +138,7 @@ if app == "Provador Oficial":
 
 
     experimentos_file = "provador/experimentos.csv"
-    colunas = ["cur_ID", "data", "descricao", "responsavel", "produtos", "titulo"]
+    colunas = ["cur_ID", "data", "descricao", "responsavel", "produtos", "titulo", "status"]
     indice = "cur_ID"
 
     rotina = st.sidebar.radio("Escolha a rotina:", ("Gerenciar experimentos", "Formulário de análise", "Analisar resultados"))
@@ -146,11 +146,22 @@ if app == "Provador Oficial":
     if rotina == "Gerenciar experimentos":
         st.title("Gerenciar experimentos")
 
-        acao = st.radio("O que deseja fazer:", ("Criar experimento","Modificar um experimento"))
+        acao = st.radio("O que deseja fazer:", ("Criar experimento", "Consultar um experimento"))
         experimentos = pd.read_csv(experimentos_file, sep=";", header=0, index_col=indice, names=colunas)
         cur_ID = len(experimentos) + 1
 
-        if acao == "Criar experimento":
+        if acao != "Criar experimento":
+            st.write("Selecione um experimento existente")
+            status = st.selectbox("Status", ["Todos"] + experimentos["status"].unique().tolist())
+            filtered = experimentos[experimentos["status"] == status] if status != "Todos" else experimentos
+            responsavel = st.selectbox("Responsável", ["Todos"] + filtered["responsavel"].unique().tolist())
+            filtered = filtered[filtered["responsavel"] == responsavel] if responsavel != "Todos" else filtered
+            titulo = st.selectbox("Título", ["Todos"] + filtered["titulo"].unique().tolist())
+            filtered = filtered[filtered["titulo"] == titulo] if titulo != "Todos" else filtered
+            ID = st.selectbox("Código", ["Todos"] + filtered.index.tolist())
+            if ID != "Todos": filtered = filtered.loc[ID]
+            st.dataframe(filtered)
+        else:
             data = st.date_input("Data:")
             responsavel = st.text_input("Responsável:")
             titulo = st.text_input("Título:")
@@ -158,15 +169,13 @@ if app == "Provador Oficial":
             descricao = '\n'.join([descricao for descricao in descricao.split("\n")])
             produtos = st.text_area("Produtos: (um por linha)")
             produtos = '|'.join([produto for produto in produtos.split("\n")])
-            novo_registro = pd.Series([data, descricao, responsavel, produtos, titulo], index=colunas[1:])
+            status = "Aberto"
+            novo_registro = pd.Series([data, descricao, responsavel, produtos, titulo, status], index=colunas[1:])
             novo_registro = pd.DataFrame(novo_registro).T
             experimentos = pd.concat([experimentos, novo_registro], ignore_index=True)
             st.write(experimentos)
             if st.button("SALVAR"):
                 experimentos.to_csv(experimentos_file, sep=";", header=True)
-        else:
-            responsavel = st.selectbox("Selecione um experimento existente", experimentos["responsavel"].tolist())
-            st.write(experimentos[experimentos["responsavel"]==responsavel].T)
     
 
     if rotina == "Formulário de análise":
