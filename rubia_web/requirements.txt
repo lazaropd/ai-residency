@@ -2,3 +2,7 @@ pandas
 streamlit
 numpy
 textdistance
+statistics
+opencage
+unidecode
+reverse_geocoder
