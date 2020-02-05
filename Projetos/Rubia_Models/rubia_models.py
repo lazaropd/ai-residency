@@ -8,6 +8,8 @@ plt.style.use(['seaborn', 'ggplot', 'seaborn-white'])
 
 from scipy import stats
 
+from itertools import combinations_with_replacement
+
 from sklearn.preprocessing import LabelEncoder, StandardScaler, MinMaxScaler
 
 from sklearn.model_selection import train_test_split, cross_val_score, KFold, StratifiedKFold
@@ -24,11 +26,11 @@ from sklearn.svm import SVR as svr
 from sklearn.ensemble import RandomForestRegressor as rfr, AdaBoostRegressor as abr, GradientBoostingRegressor as gbr
 
 # classifiers
-from sklearn.linear_model import SGDClassifier as sgdc, LogisticRegression as logitc
+from sklearn.linear_model import SGDClassifier as sgdc, LogisticRegression as logitc, RidgeClassifier as rc
 from sklearn.neighbors import KNeighborsClassifier as knnc
 from sklearn.tree import DecisionTreeClassifier as dtc
 from sklearn.svm import SVC as svc
-from sklearn.naive_bayes import GaussianNB as gnbc, BernoulliNB as bnbc
+from sklearn.naive_bayes import GaussianNB as gnbc, BernoulliNB as bnbc, MultinomialNB as mnbc
 from sklearn.ensemble import RandomForestClassifier as rfc, GradientBoostingClassifier as gbc
 
 
@@ -56,6 +58,7 @@ class rubia_models:
             cols_resume.append('%s (%s)' % (col, coltype))
         # beware in the presence of non numeric categorical data
         print('* COLUMNS INFO: ', ', '.join(cols_resume))
+        return None
 
     
     # show a few general info about the dataset
@@ -85,25 +88,30 @@ class rubia_models:
         print('* X: ', ' | '.join(X_cols))
         print('* y: ', y_col)
         print('* M: ', (self.X.shape), '|', self.y.shape)
-        self.checkDtypes(df)
+        #self.checkDtypes(df)
         print('* ')
         print(self.report_width * '*' + '\n')
 
         if graph:   
             size = 1.3 * self.report_width // 10
             # balance between every output class: pay special attention with unbalanced data
-            fig, ax = plt.subplots(figsize=(size, 0.5 * size))
-            df[y_col].value_counts().nlargest(10).plot(kind='bar')
-            plt.title('Classes Balance')
-            plt.xticks(rotation=45)
-            plt.show()
+            if len(df[y_col].unique()) <= 10:
+                fig, ax = plt.subplots(figsize=(size, 0.5 * size))
+                df[y_col].value_counts().nlargest(10).plot(kind='bar')
+                plt.title('Classes Balance')
+                plt.xticks(rotation=45)
+                plt.show()
             # histogram for every feature: pay attention to outliers, data distribution and dimension
             COLS = 3
             ROWS = len(self.X.columns) // COLS + (1 if len(self.X.columns) % COLS != 0 else 0)
             fig, ax = plt.subplots(ROWS, COLS, figsize=(size, 4 * ROWS))
             row, col = 0, 0
             for i, feature in enumerate(self.X.columns):
-                row += 1 if col == (COLS - 1) else 0
+                if col == (COLS - 1):
+                    row += 1
+                    plt.subplots_adjust(hspace=0.2, top = 0.92)
+                else:
+                    plt.subplots_adjust(hspace=0.2, top = 0.80)
                 col = i % COLS    
                 cax = ax[row, col] if ROWS > 1 else ax[col]
                 if len(df[y_col].unique()) <= 10:
@@ -112,7 +120,6 @@ class rubia_models:
                 else:
                     df[feature].hist(bins=30, alpha=0.5, edgecolor='white', ax=cax).set_title(feature)
                 plt.legend(df[y_col].unique())    
-            plt.subplots_adjust(hspace=0.2, top = 0.92)
             fig.suptitle('Data Distribution', fontsize=14)
             plt.show()
             # pairplot and density plot for every column
@@ -134,7 +141,7 @@ class rubia_models:
             corr = self.M.corr()
             mask = np.zeros_like(corr)
             mask[np.triu_indices_from(mask)] = True
-            sns.heatmap(self.M.corr(), ax=ax, mask=mask, annot = True, vmin = -1, vmax = 1, center = 0, cmap = 'coolwarm')
+            sns.heatmap(self.M.corr(), ax=ax, mask=mask, annot = True, vmin = -1, vmax = 1, center = 0, cmap = 'RdBu_r')
             plt.xticks(rotation=45)
             plt.yticks(rotation=45)
             plt.title('Correlation Matrix')
@@ -143,12 +150,43 @@ class rubia_models:
         return None
 
 
+    # add higher level and interaction terms to the model
+    def calcTerms(self, df, cols):
+        if len(cols) > 1:
+            product = df[cols].product(axis=1)
+        else:
+            product = np.sqrt((df[cols]))
+        return product
+    def addTerms(self, X, y, levels=2, interaction=True, root=False):
+        cols = X.columns
+        if levels > 1: #higher level terms makes sense only for k > 1
+            #calculating a combination of n elements in groups of k with replacement
+            n, k = cols, levels
+            if interaction:
+                for comb in combinations_with_replacement(n,k):
+                    comb = list(comb)
+                    self.X['*'.join(comb)] = self.calcTerms(X, comb)
+            # or just the polynomial terms if interaction = False
+            else:
+                for col in cols:
+                    for order in range(2, k+1):
+                        comb = [col for elem in range(1, order+1)]
+                        self.X['*'.join(comb)] = self.calcTerms(X, comb)
+            if root:
+                for col in cols:
+                    comb = [col]
+                    self.X['sqroot_'+col] = self.calcTerms(X, comb)
+        self.M = pd.concat([self.X, self.y], axis=1)
+        return None
+
+    
     # encode all non numeric features
     def encode(self):
         le = LabelEncoder()    
         for col in self.M.columns:
             if str(self.M[col].dtype) == 'object' or str(self.M[col].dtype) == 'string':
                 self.M[col] = le.fit_transform(self.M[col])
+        return None
 
 
     # analyse if this is a regression or classification problem
@@ -157,6 +195,7 @@ class rubia_models:
             self.strategy = 'regression'
         else:
             self.strategy = 'classification'
+        return None
 
 
     # apply transformation to data
@@ -190,7 +229,7 @@ class rubia_models:
                 self.yt_train, self.scalery = stats.boxcox(self.y_train)
                 self.yt_train = pd.DataFrame(self.yt_train, columns=[self.y.columns])
                 self.yt_test = stats.boxcox(self.y_test, lmbda=self.scalery) 
-
+        return None
     
     # apply regression models
     def regression(self, metric="root_mean_squared_error", folds=10, alphas=[], graph=False):
@@ -244,6 +283,7 @@ class rubia_models:
             plt.xticks(rotation=45)
             plt.subplots_adjust(hspace=0.0)
             plt.show()             
+        return None
 
 
     # apply classification models
@@ -255,12 +295,14 @@ class rubia_models:
         models["K nearest neighbors classifier K5"]  = knnc(n_neighbors=5)
         models["K nearest neighbors classifier K10"] = knnc(n_neighbors=10)        
         models["Decision tree classifier"]           = dtc()
-        models["Logistic classifier"]                = logitc()
+        models["Logistic classifier"]                = logitc(max_iter=2000)
         models["SVM classifier with RBF kernel"]     = svc(gamma='scale')
         models["SVM classifier with linear kernel"]  = svc(kernel='linear')
         models["Gaussian naive bayes"]               = gnbc()
         models["Bernoulli naive bayes"]              = bnbc()
+        models["Multinomial naive bayes"]            = mnbc()
         models["SGD classifier"]                     = sgdc(max_iter=10000)
+        models["Ridge classifier"]                   = rc()
         models["Random forest classifier"]           = rfc(n_estimators=100)
         models["Gradient boosting classifier"]       = gbc()
         self.models = models
@@ -293,6 +335,7 @@ class rubia_models:
             plt.xticks(rotation=45)
             plt.subplots_adjust(hspace=0.0)
             plt.show()             
+        return None
 
     
     # residual analysis for regression problems
@@ -346,6 +389,7 @@ class rubia_models:
             h = plt.plot(x, rv.pdf(x), c='b', lw=2)
             ax[1][1].set_title('Residual Histogram', size=14)
             plt.show()
+        return None
 
 
     # evaluate some models
@@ -353,15 +397,16 @@ class rubia_models:
         if self.strategy == 'regression':
             self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(self.X, self.y, test_size=test_size, shuffle=True)
             # transform data
-            rm.transform('X', transformX, graph) #model transf for X_train
-            rm.transform('y', transformY, graph) #model transf for y_train
+            self.transform('X', transformX, graph) #model transf for X_train
+            self.transform('y', transformY, graph) #model transf for y_train
             self.regression(metric, folds, alphas, graph)
         else:
             self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(self.X, self.y, test_size=test_size, shuffle=True, stratify=self.y)
             # transform data
-            rm.transform('X', transformX, graph) #model transf for X_train
-            rm.transform('y', transformY, graph) #model transf for y_train
+            self.transform('X', transformX, graph) #model transf for X_train
+            self.transform('y', transformY, graph) #model transf for y_train
             self.classification(metric, folds, alphas, graph)
+        return None
 
 
     # given a model name, evaluate y_hat/y_pred and the overall performance of such model
@@ -403,20 +448,20 @@ class rubia_models:
             print(self.report_width * '*', '\n')
             report = classification_report(y, y_pred, output_dict=True)
             if graph:
-                fig, ax = plt.subplots(figsize=(size, 0.5 * size))
+                fig, ax = plt.subplots(figsize=(size, 0.3 * size))
                 plt.title('Confusion Matrix')
-                sns.heatmap(confusion_matrix(y, y_pred), annot=True, cmap="YlGn", fmt='d',)
+                sns.heatmap(confusion_matrix(y, y_pred), annot=True, cmap='YlGn', fmt='d',)
                 plt.xlabel('Predicted')
                 plt.ylabel('True Class')
                 plt.show()
                 fig, ax = plt.subplots(figsize=(size, 0.5 * size))
                 plt.title('Classification Report')
-                sns.heatmap(pd.DataFrame(report).iloc[0:3].T, annot=True, vmin=0, vmax=1, cmap="YlGn", fmt='.2g')
+                sns.heatmap(pd.DataFrame(report).iloc[0:3].T, annot=True, vmin=0, vmax=1, cmap='BrBG', fmt='.2g')
                 plt.xlabel('Score')
                 plt.show()
             else:
                 display(pd.DataFrame(report).T)
-
+        return None
 
 
 
@@ -438,6 +483,10 @@ rm.explore(rm.data_raw, y_col, ignore_cols, graph=False) #updates X, y, M
 
 # encode every column of type object or string to categorical numbers
 rm.encode()
+
+# add higher level and interaction terms to the model
+# be carefull when using higher level terms and graphs together, less powerfull hardware can bottleneck with higher complexity
+rm.addTerms(rm.X, rm.y, levels=1, interaction=False, root=False)
 rm.explore(rm.M, y_col, ignore_cols, graph=False) #updates X, y, M
 
 # analyse if this is a regression or a classification problem and evaluate some models
@@ -445,13 +494,15 @@ rm.explore(rm.M, y_col, ignore_cols, graph=False) #updates X, y, M
 # else it will perform a classification modeling
 rm.analyse(y_col)
 
+# define a few mode parameters and call the model evaluation procedure
 alphas = 10 ** np.linspace(10, -2, 100) * 0.5
 rm.evaluate(test_size=0.3, transformX='xstandard', transformY='ynone', folds=10, alphas=alphas, graph=False, metric='neg_mean_squared_error')
-rm.test('SGD classifier', graph=False)
-rm.test('Logistic classifier', graph=True)
+#rm.test('SGD classifier', graph=True)
+#rm.test('Logistic classifier', graph=True)
 
 
 
+# applying to a regression dataset
 
 #df = pd.read_csv('Advertising.csv', index_col=0)
 #rm = rubia_models(df, debug=False)
@@ -460,12 +511,13 @@ rm.test('Logistic classifier', graph=True)
 #ignore_cols = []
 #rm.explore(rm.data_raw, y_col, ignore_cols, graph=False) #updates X, y, M
 #rm.encode()
+#rm.addTerms(rm.X, rm.y, levels=2, interaction=True, root=True)
 #rm.explore(rm.M, y_col, ignore_cols, graph=False) #updates X, y, M
 #rm.analyse(y_col)
 #alphas = 10 ** np.linspace(10, -2, 100) * 0.5
 #rm.evaluate(test_size=0.3, transformX='xstandard', transformY='ynone', folds=10, alphas=alphas, graph=False, metric='neg_mean_squared_error')
-#rm.test('Linear regressor', graph=False)
-#rm.test('Gradient boost regressor', graph=False)
+#rm.test('Linear regressor', graph=True)
+#rm.test('Gradient boost regressor', graph=True)
 
 
 #df = pd.read_csv('SAheart.csv')
@@ -488,6 +540,6 @@ rm.test('Logistic classifier', graph=True)
 # To get all coefficients for a given model:
 #   lasso.coef_, lassocv.coef_, ridge.coef_, ridgecv.coef_
 #   rfc.feature_importances_
-
-    
+#   logit.classes_, coef_, intercept_, n_iter_
+#   nbc.class_count_, class_prior_, classes_, sigma_, theta_
 
