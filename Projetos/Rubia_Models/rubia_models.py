@@ -6,7 +6,9 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 plt.style.use(['seaborn', 'ggplot', 'seaborn-white'])
 
+import scipy
 from scipy import stats
+from scipy.io import arff
 
 from itertools import combinations_with_replacement
 
@@ -33,6 +35,8 @@ from sklearn.svm import SVC as svc
 from sklearn.naive_bayes import GaussianNB as gnbc, BernoulliNB as bnbc, MultinomialNB as mnbc
 from sklearn.ensemble import RandomForestClassifier as rfc, GradientBoostingClassifier as gbc
 
+# multiclass
+from sklearn.multiclass import OneVsRestClassifier as ovrc, OneVsOneClassifier as ovoc
 
 
 
@@ -44,6 +48,7 @@ class rubia_models:
         self.data_raw = df
         self.M = df
         self.report_width = width
+        self.graph_width = 1.3 * width // 10
         self.debug = debug
         if not self.debug: # remove warnings when not running in debug mode
             import warnings
@@ -93,7 +98,7 @@ class rubia_models:
         print(self.report_width * '*' + '\n')
 
         if graph:   
-            size = 1.3 * self.report_width // 10
+            size = self.graph_width
             # balance between every output class: pay special attention with unbalanced data
             if len(df[y_col].unique()) <= 10:
                 fig, ax = plt.subplots(figsize=(size, 0.5 * size))
@@ -183,9 +188,13 @@ class rubia_models:
     # encode all non numeric features
     def encode(self):
         le = LabelEncoder()    
-        for col in self.M.columns:
-            if str(self.M[col].dtype) == 'object' or str(self.M[col].dtype) == 'string':
-                self.M[col] = le.fit_transform(self.M[col])
+        for col in self.X.columns:
+            if str(self.X[col].dtype) == 'object' or str(self.X[col].dtype) == 'string':
+                self.X[col] = le.fit_transform(self.X[col])
+        for col in self.y.columns:
+            if str(self.y[col].dtype) == 'object' or str(self.y[col].dtype) == 'string':
+                self.y[col] = le.fit_transform(self.y[col])
+        self.M = pd.concat([self.X, self.y], axis=1)
         return None
 
 
@@ -195,12 +204,13 @@ class rubia_models:
             self.strategy = 'regression'
         else:
             self.strategy = 'classification'
+        print('Problem identified as', self.strategy)
         return None
 
 
     # apply transformation to data
     def transform(self, who, transform, graph=False):
-        size = 1.3 * self.report_width // 10
+        size = self.graph_width
         if who == 'X':
             if transform == 'xnone':
                 self.scalerX = None 
@@ -232,8 +242,8 @@ class rubia_models:
         return None
     
     # apply regression models
-    def regression(self, metric="root_mean_squared_error", folds=10, alphas=[], graph=False):
-        size = 1.3 * self.report_width // 10
+    def regression(self, metric, folds=10, alphas=[], graph=False):
+        size = self.graph_width
 
         models = {}
         models["Linear regressor"]                  = lr()
@@ -258,7 +268,7 @@ class rubia_models:
         print(self.report_width * '*', '\n*')
         print('* REGRESSION RESULTS - BEFORE PARAMETERS BOOSTING \n*')
         #kf = StratifiedKFold(n_splits=folds, shuffle=True)
-        kf = KFold(n_splits=folds)
+        kf = KFold(n_splits=folds, shuffle=True)
         results = []
         names = []
         for model_name in models:
@@ -288,23 +298,37 @@ class rubia_models:
 
     # apply classification models
     def classification(self, metric, folds, alphas, graph):
-        size = 1.3 * self.report_width // 10
+        size = self.graph_width
+
+        if len(self.y.iloc[:,0].unique()) > 2:
+            struct = 'multiclass'
+        else:
+            struct = 'binary'
 
         models = {}
         models["K nearest neighbors classifier K2"]  = knnc(n_neighbors=2)
         models["K nearest neighbors classifier K5"]  = knnc(n_neighbors=5)
         models["K nearest neighbors classifier K10"] = knnc(n_neighbors=10)        
         models["Decision tree classifier"]           = dtc()
-        models["Logistic classifier"]                = logitc(max_iter=2000)
         models["SVM classifier with RBF kernel"]     = svc(gamma='scale')
         models["SVM classifier with linear kernel"]  = svc(kernel='linear')
         models["Gaussian naive bayes"]               = gnbc()
-        models["Bernoulli naive bayes"]              = bnbc()
+        models["Bernoulli naive bayes"]              = bnbc(binarize=0.5)
         models["Multinomial naive bayes"]            = mnbc()
         models["SGD classifier"]                     = sgdc(max_iter=10000)
         models["Ridge classifier"]                   = rc()
         models["Random forest classifier"]           = rfc(n_estimators=100)
         models["Gradient boosting classifier"]       = gbc()
+
+        if struct == 'multiclass':
+            models["Logistic classifier multinomial"]= logitc(multi_class='multinomial', solver='lbfgs')
+            models["Logistic classifier auto"]       = logitc(multi_class='auto')
+            models["Logistic One vs Rest"]           = ovrc(logitc())
+            models["Logistic One vs One"]            = ovoc(logitc())
+
+        if struct == 'binary':
+            models["Logistic classifier"]            = logitc(max_iter=2000)
+
         self.models = models
 
         print('\n')
@@ -314,7 +338,7 @@ class rubia_models:
         results = []
         names = []
         for model_name in models:
-            cv_scores = cross_val_score(models[model_name], self.Xt_train, self.yt_train.values.ravel(), cv=kf, error_score=np.nan)  
+            cv_scores = cross_val_score(models[model_name], self.Xt_train, self.yt_train.values.ravel(), cv=kf, scoring=metric, error_score=np.nan)  
             results.append(cv_scores)
             names.append(model_name)
         print(self.report_width * '*', '')
@@ -344,7 +368,7 @@ class rubia_models:
     def calc_r2(self, y, y_hat):
         return r2_score(y_hat, y)
     def residual(self, y, y_hat, model_name, graph=False):
-        size = 1.3 * self.report_width // 10
+        size = self.graph_width
         # do some data conversion because of different methods data types
         sample_size = len(y_hat)
         if isinstance(y, pd.DataFrame): 
@@ -393,14 +417,16 @@ class rubia_models:
 
 
     # evaluate some models
-    def evaluate(self, test_size=0.2, transformX='xnone', transformY='ynone', folds=10, alphas=[], graph=False, metric='neg_mean_squared_error'):
+    def evaluate(self, test_size=0.2, transformX='xnone', transformY='ynone', folds=10, alphas=[], graph=False, metric=''):
         if self.strategy == 'regression':
+            if metric == '': metric = 'neg_mean_squared_error'
             self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(self.X, self.y, test_size=test_size, shuffle=True)
             # transform data
             self.transform('X', transformX, graph) #model transf for X_train
             self.transform('y', transformY, graph) #model transf for y_train
             self.regression(metric, folds, alphas, graph)
         else:
+            if metric == '': metric = 'accuracy'
             self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(self.X, self.y, test_size=test_size, shuffle=True, stratify=self.y)
             # transform data
             self.transform('X', transformX, graph) #model transf for X_train
@@ -411,7 +437,7 @@ class rubia_models:
 
     # given a model name, evaluate y_hat/y_pred and the overall performance of such model
     def test(self, model_name, graph=False):
-        size = 1.3 * self.report_width // 10
+        size = self.graph_width
         model = self.models[model_name]
         # fit using the train subset
         X, y = self.Xt_train, self.yt_train
@@ -465,20 +491,44 @@ class rubia_models:
 
 
 
+# Rubia Models demo cases
+
+def selectDemo(id):
+    if id == 0:
+        data, meta = scipy.io.arff.loadarff('dataset/scene_arff.arff')
+        df = pd.DataFrame(data)
+        y_cols = 'Beach'
+        #y_cols = ['Beach', 'Sunset', 'FallFoliage', 'Field', 'Mountain', 'Urban']
+        ignore_cols = ['Sunset', 'FallFoliage', 'Field', 'Mountain', 'Urban']
+    elif id == 1:
+        df = pd.read_csv('Advertising.csv', index_col=0)
+        y_cols = 'sales'
+        ignore_cols = []
+    elif id == 2:
+        df = pd.read_csv('SAheart.csv')
+        y_cols = 'chd'
+        ignore_cols = []
+    elif id == 3:
+        df = pd.read_csv('pima-indians-diabetes.csv')
+        y_cols = 'Class'
+        ignore_cols = []
+    else:
+        df = pd.read_csv('iris.csv')
+        y_cols = 'species'
+        ignore_cols = []
+    return df, y_cols, ig_cols
+
 
 # load data as a pandas.dataframe object and pass it to the class
-df = pd.read_csv('pima-indians-diabetes.csv')
+df, y_col, ignore_cols = selectDemo(0)
 
 # load the class rubia_models and show important info about the dataset
 # flag debug mode to True to show warning messages
 rm = rubia_models(df, debug=False)
 rm.describe(rm.data_raw)
 
-# please inform the output column here, a list of columns can also be ignored if necessary
 # columns listed as ignored will be discarded while modeling
 # flag graph to true to show some exploratory and correlation graphs on the dataset
-y_col = 'Class'
-ignore_cols = []
 rm.explore(rm.data_raw, y_col, ignore_cols, graph=False) #updates X, y, M
 
 # encode every column of type object or string to categorical numbers
@@ -494,45 +544,17 @@ rm.explore(rm.M, y_col, ignore_cols, graph=False) #updates X, y, M
 # else it will perform a classification modeling
 rm.analyse(y_col)
 
-# define a few mode parameters and call the model evaluation procedure
-alphas = 10 ** np.linspace(10, -2, 100) * 0.5
+# evaluate the performance of a mix of models
 rm.evaluate(test_size=0.3, transformX='xstandard', transformY='ynone', folds=10, alphas=alphas, graph=False, metric='neg_mean_squared_error')
-#rm.test('SGD classifier', graph=True)
-#rm.test('Logistic classifier', graph=True)
+
+# apply tuning to the best models
+alphas = 10 ** np.linspace(10, -2, 100) * 0.5
+rm.test('Logistic One vs One', graph=True)
+rm.test('Logistic classifier multinomial', graph=True)
 
 
 
-# applying to a regression dataset
 
-#df = pd.read_csv('Advertising.csv', index_col=0)
-#rm = rubia_models(df, debug=False)
-#rm.describe(rm.data_raw)
-#y_col = 'sales'
-#ignore_cols = []
-#rm.explore(rm.data_raw, y_col, ignore_cols, graph=False) #updates X, y, M
-#rm.encode()
-#rm.addTerms(rm.X, rm.y, levels=2, interaction=True, root=True)
-#rm.explore(rm.M, y_col, ignore_cols, graph=False) #updates X, y, M
-#rm.analyse(y_col)
-#alphas = 10 ** np.linspace(10, -2, 100) * 0.5
-#rm.evaluate(test_size=0.3, transformX='xstandard', transformY='ynone', folds=10, alphas=alphas, graph=False, metric='neg_mean_squared_error')
-#rm.test('Linear regressor', graph=True)
-#rm.test('Gradient boost regressor', graph=True)
-
-
-#df = pd.read_csv('SAheart.csv')
-#rm = rubia_models(df, debug=False)
-#rm.describe(rm.data_raw)
-#y_col = 'chd'
-#ignore_cols = []
-#rm.explore(rm.data_raw, y_col, ignore_cols, graph=False) #updates X, y, M
-#rm.encode()
-#rm.explore(rm.M, y_col, ignore_cols, graph=False) #updates X, y, M
-#rm.analyse(y_col)
-#alphas = 10 ** np.linspace(10, -2, 100) * 0.5
-#rm.evaluate(test_size=0.3, transformX='xstandard', transformY='ynone', folds=10, alphas=alphas, graph=False, metric='neg_mean_squared_error')
-#rm.test('SGD classifier', graph=True)
-#rm.test('Logistic classifier', graph=True)
 
 
 
@@ -543,3 +565,165 @@ rm.evaluate(test_size=0.3, transformX='xstandard', transformY='ynone', folds=10,
 #   logit.classes_, coef_, intercept_, n_iter_
 #   nbc.class_count_, class_prior_, classes_, sigma_, theta_
 
+
+
+
+
+
+# TO DO
+
+
+
+# adaptar o rubia_models para receber y no formato multiclass
+# acrescentar gridsearch para os modelos (pode ser na avaliação)
+# acrescentar feature_selection
+
+
+
+# mudar o alphas para um dict com params
+# dentro de regression e classification, extrair os params do dict
+
+
+# BALANCEAR CLASSES
+
+
+# from sklearn.linear_model import ElasticNet
+# rnc = RadiusNeighborsClassifier(radius=5, weights='distance')
+
+# from sklearn.neighbors.nearest_centroid import NearestCentroid
+
+# svc = SVC(kernel='poly')
+# svc = SVC(kernel='linear')
+
+
+# inverso do ravel
+# label = label[:,np.newaxis]
+
+
+
+
+# porque meu MNB nao funciona??? 
+# from sklearn.naive_bayes import MultinomialNB
+# from sklearn.metrics import confusion_matrix
+
+
+# train_x, test_x, train_y, test_y = train_test_split(data_1, data.chd)
+# mnb = MultinomialNB(class_prior=[.25,.75])
+# mnb.fit(train_x,train_y)
+# y_pred = mnb.predict(test_x)
+# print(confusion_matrix(y_true=test_y,y_pred=y_pred))
+# print('Score MultinomialNB: ',mnb.score(test_x,test_y))
+
+
+
+
+#
+# from sklearn.feature_selection import SelectKBest, chi2
+# # selecionar um modelo para otimizar
+    
+# pipetree = Pipeline([('scl', StandardScaler()), ('clf', DecisionTreeClassifier())])
+# pipe = [pipetree]    
+
+# param_range = [3, 5]
+# grid_params = [{'clf__criterion': ['gini', 'entropy'],
+#                 'clf__max_depth': param_range,
+#                 'clf__min_samples_leaf': param_range,
+#                 'clf__min_samples_split': param_range[1:]
+#               }]
+
+
+# scores = ['accuracy', 'recall_macro', 'precision_macro']
+# for score in scores:
+    
+#     kfolds = StratifiedKFold(n_splits=2, shuffle=True)
+#     cv = kfolds.split(X_train, y_train)
+
+#     print("\n\n# Tuning hyper-parameters for %s" % score)
+#     gs = GridSearchCV(estimator=pipetree, param_grid=grid_params, scoring=score, cv=cv)
+#     gs.fit(X_train, y_train)
+#     print('\nBest accuracy: %.3f' % gs.best_score_)
+#     print('\nBest params:\n', gs.best_params_)
+
+#     print("\nGrid scores on development set:")
+#     means = gs.cv_results_['mean_test_score']
+#     stds = gs.cv_results_['std_test_score']
+#     for mean, std, params in zip(means, stds, gs.cv_results_['params']):
+#         print("%0.3f (+/-%0.03f) for %r"
+#               % (mean, std * 2, params))
+    
+#     print("\nClassification report:")
+#     print()
+#     y_true, y_pred = y_test, gs.predict(X_test)
+#     print(classification_report(y_true, y_pred))
+#     print()   
+
+
+
+# estimator.get_params().keys()
+
+
+
+# quanto tem muitas preditoras, uma opcao é eliminar as menos relevantes
+# from sklearn.datasets import load_iris
+# from sklearn.feature_selection import SelectKBest
+# from sklearn.feature_selection import chi2
+# X, y = load_iris(return_X_y=True)
+# print(X.shape)
+# X_new = SelectKBest(chi2, k=2).fit_transform(X, y)
+# print(X_new.shape)
+
+
+
+
+# from sklearn.preprocessing import LabelEncoder, OneHotEncoder
+# #---------------------
+# df = pd.DataFrame({
+#     'age':[33,44,22,44,55,22],
+#     'gender':['Male','Female','Male','Female','Male','Male']
+# })
+# #------------------------------
+# le = LabelEncoder()
+# df['gender_tf'] = le.fit_transform(df.gender)
+# print(df)
+# print(OneHotEncoder().fit_transform(df[['gender_tf']]).toarray())
+
+
+
+# 
+# from sklearn.preprocessing import RobustScaler
+
+
+# 1.7 Caracteristicas polinomiais
+# deriva caracteristica nao linear convertendo os dados para um grau maior
+# Usado com Linear Regression para modelo de aprendizado de alto grau
+# from sklearn.preprocessing import PolynomialFeatures
+# #-------------------------
+# df = pd.DataFrame({'A':[1,2,3,4,5], 'B':[2,3,4,5,6]})
+# #----------------------------
+
+# pol = PolynomialFeatures(degree=2)
+# pol.fit_transform(df)
+
+
+
+# X, y = make_blobs(n_features=2, n_samples=1000, cluster_std=2, centers = 2)
+# #---------Plotting----------------------
+# #f = plt.figure()
+# #plt.scatter(X[:,0], X[:,1], c=y, s=10)
+# #plt.show()
+# #-------------------------------------
+# h = .02
+# x_min = X[:,0].min() - .5
+# x_max = X[:,0].max() + .5
+# y_min = X[:,1].min() - .5
+# y_max = X[:,1].max() + .5
+# xx, yy = np.meshgrid(np.arange(x_min,x_max,h), np.arange(y_min,y_max,h))
+# #---------------------------------------
+# lr = LogisticRegression()
+# lr.fit(X,y)
+# Z = lr.predict(np.c_[xx.ravel(),yy.ravel()])
+# #--------------------------------------
+# Z = Z.reshape(xx.shape)
+# plt.pcolormesh(xx,yy,Z, cmap=plt.cm.Paired)
+# plt.scatter(X[:,0],X[:,1], c=y, s=10)
+# plt.show()
