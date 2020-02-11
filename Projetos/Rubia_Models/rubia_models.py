@@ -12,7 +12,7 @@ from scipy.io import arff
 
 from itertools import combinations_with_replacement
 
-from sklearn.preprocessing import LabelEncoder, StandardScaler, MinMaxScaler
+from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler, MinMaxScaler, RobustScaler
 
 from sklearn.model_selection import train_test_split, cross_val_score, KFold, StratifiedKFold
 
@@ -49,6 +49,7 @@ class rubia_models:
         self.M = df
         self.report_width = width
         self.graph_width = 1.3 * width // 10
+        self.graphs_expl = []
         self.debug = debug
         if not self.debug: # remove warnings when not running in debug mode
             import warnings
@@ -62,50 +63,57 @@ class rubia_models:
             coltype = str(df[col].dtype)
             cols_resume.append('%s (%s)' % (col, coltype))
         # beware in the presence of non numeric categorical data
-        print('* COLUMNS INFO: ', ', '.join(cols_resume))
-        return None
+        return cols_resume
 
     
     # show a few general info about the dataset
-    def describe(self, df):
-        print(self.report_width * '*', '\n*')
-        print('* DATA OVERVIEW FOR THIS DATASET \n*')
-        print('* DATA SHAPE: ', df.shape)
-        self.checkDtypes(df)
-        print('* ')
-        print(self.report_width * '*')
-        print('\nDATA SAMPLE: ')
-        display(df.sample(5))
-        print('\nSTATISTICS: ')
-        display(df.describe(include='all').T)
-        print('\n\n')
+    def describe(self, df, printt=True):
+        self.cols_dtypes = self.checkDtypes(df)
+        if printt:
+            print(self.report_width * '*', '\n*')
+            print('* DATA OVERVIEW FOR THIS DATASET \n*')
+            print('* DATA SHAPE: ', df.shape)
+            print('* COLUMNS INFO: ', ', '.join(self.cols_dtypes))
+            print('* ')
+            print(self.report_width * '*')
+            print('\nDATA SAMPLE: ')
+            print(df.sample(5))
+            print('\nSTATISTICS: ')
+            print(df.describe(include='all').T)
+            print('\n\n')
         return None
         
 
     # run a basic and repetitive EDA for a given pandas dataframe
-    def explore(self, df, y_col, ig_cols, graph=False):
-        X_cols = [col for col in df.columns if col not in [y_col] and col not in ig_cols]
+    def explore(self, df, y_cols, ig_cols, printt=True, graph=False):
+        X_cols = [col for col in df.columns if col not in y_cols and col not in ig_cols]
         self.X = df.loc[:, X_cols]
-        self.y = df.loc[:, [y_col]]
-        self.M = df.loc[:, X_cols + [y_col]]
-        print(self.report_width * '*', '\n*')
-        print('* FEATURE EXTRACTION REPORT \n*')
-        print('* X: ', ' | '.join(X_cols))
-        print('* y: ', y_col)
-        print('* M: ', (self.X.shape), '|', self.y.shape)
-        #self.checkDtypes(df)
-        print('* ')
-        print(self.report_width * '*' + '\n')
+        self.y = df.loc[:, y_cols]
+        self.M = df.loc[:, X_cols + y_cols]
 
-        if graph:   
+        if printt:
+            print(self.report_width * '*', '\n*')
+            print('* FEATURE EXTRACTION REPORT \n*')
+            print('* X: ', ' | '.join(X_cols))
+            print('* y: ', ' | '.join(y_cols))
+            print('* M: ', self.X.shape, '|', self.y.shape)
+            print('* ')
+            print(self.report_width * '*' + '\n')
+
+        if graph:  
+            self.graphs_expl = [] 
             size = self.graph_width
             # balance between every output class: pay special attention with unbalanced data
-            if len(df[y_col].unique()) <= 10:
-                fig, ax = plt.subplots(figsize=(size, 0.5 * size))
-                df[y_col].value_counts().nlargest(10).plot(kind='bar')
-                plt.title('Classes Balance')
-                plt.xticks(rotation=45)
-                plt.show()
+            unique = []
+            for y_col in y_cols:
+                unique += list(df[y_col].unique())
+                if len(df[y_col].unique()) <= 10:
+                    fig, ax = plt.subplots(figsize=(size, 0.5 * size))
+                    df[y_col].value_counts().nlargest(10).plot(kind='bar')
+                    plt.title('Classes Balance (%s)' % y_col)
+                    plt.xticks(rotation=45)
+                    self.graphs_expl.append(fig)
+                    plt.show()
             # histogram for every feature: pay attention to outliers, data distribution and dimension
             COLS = 3
             ROWS = len(self.X.columns) // COLS + (1 if len(self.X.columns) % COLS != 0 else 0)
@@ -119,17 +127,17 @@ class rubia_models:
                     plt.subplots_adjust(hspace=0.2, top = 0.80)
                 col = i % COLS    
                 cax = ax[row, col] if ROWS > 1 else ax[col]
-                if len(df[y_col].unique()) <= 10:
-                    for cat in df[y_col].unique():
-                        df[df[y_col]==cat][feature].hist(bins=30, alpha=0.5, edgecolor='white', ax=cax).set_title(feature)
+                if len(unique) <= 10 and len(y_cols) == 1: # discriminate only one-level and few classes cases
+                    for cat in df[y_cols[0]].unique():
+                        df[df[y_cols[0]]==cat][feature].hist(bins=30, alpha=0.5, edgecolor='white', ax=cax).set_title(feature)
                 else:
                     df[feature].hist(bins=30, alpha=0.5, edgecolor='white', ax=cax).set_title(feature)
-                plt.legend(df[y_col].unique())    
             fig.suptitle('Data Distribution', fontsize=14)
+            self.graphs_expl.append(fig)
             plt.show()
             # pairplot and density plot for every column
-            if len(df[y_col].unique()) <= 10:
-                g = sns.pairplot(self.M, hue=y_col, plot_kws={'alpha':0.5, 's': 20})
+            if len(unique) <= 10 and len(y_cols) == 1: # discriminate only one-level and few classes cases
+                g = sns.pairplot(self.M, hue=y_cols[0], plot_kws={'alpha':0.5, 's': 20})
                 handles = g._legend_data.values()
                 labels = g._legend_data.keys()
                 g._legend.remove()
@@ -140,6 +148,7 @@ class rubia_models:
             g.fig.set_figheight(0.75 * size)
             plt.subplots_adjust(top = 0.92, bottom=0.08)
             g.fig.suptitle('Pairplot and Density Matrix', fontsize=14)
+            self.graphs_expl.append(g.fig)
             plt.show()
             # correlation heatmap matrix
             fig, ax = plt.subplots(figsize=(0.95 * size, 0.95 * size))
@@ -150,6 +159,7 @@ class rubia_models:
             plt.xticks(rotation=45)
             plt.yticks(rotation=45)
             plt.title('Correlation Matrix')
+            self.graphs_expl.append(fig)
             plt.show()
 
         return None
@@ -163,7 +173,10 @@ class rubia_models:
             product = np.sqrt((df[cols]))
         return product
     def addTerms(self, X, y, levels=2, interaction=True, root=False):
-        cols = X.columns
+        cols = []
+        for col in X.columns: #lets add polynomial terms only for valid data types
+            if not str(self.X[col].dtype) == 'object' and not str(self.X[col].dtype) == 'string':
+                cols.append(col)
         if levels > 1: #higher level terms makes sense only for k > 1
             #calculating a combination of n elements in groups of k with replacement
             n, k = cols, levels
@@ -177,34 +190,52 @@ class rubia_models:
                     for order in range(2, k+1):
                         comb = [col for elem in range(1, order+1)]
                         self.X['*'.join(comb)] = self.calcTerms(X, comb)
-            if root:
-                for col in cols:
-                    comb = [col]
+        if root:
+            for col in cols:
+                comb = [col]
+                try: # cannot apply root transform to some data types or data values
                     self.X['sqroot_'+col] = self.calcTerms(X, comb)
+                except:
+                    pass
         self.M = pd.concat([self.X, self.y], axis=1)
         return None
 
     
     # encode all non numeric features
-    def encode(self):
-        le = LabelEncoder()    
-        for col in self.X.columns:
-            if str(self.X[col].dtype) == 'object' or str(self.X[col].dtype) == 'string':
-                self.X[col] = le.fit_transform(self.X[col])
-        for col in self.y.columns:
-            if str(self.y[col].dtype) == 'object' or str(self.y[col].dtype) == 'string':
-                self.y[col] = le.fit_transform(self.y[col])
+    def encode(self, encoder='LabelEncoder'):
+        if encoder == 'LabelEncoder':
+            le = LabelEncoder()   
+            for col in self.X.columns:
+                if str(self.X[col].dtype) == 'object' or str(self.X[col].dtype) == 'string':
+                    self.X[col] = le.fit_transform(self.X[col])
+            for col in self.y.columns:
+                if str(self.y[col].dtype) == 'object' or str(self.y[col].dtype) == 'string':
+                    self.y[col] = le.fit_transform(self.y[col])
+        else:
+            #le = OneHotEncoder() 
+            for col in self.X.columns:
+                if str(self.X[col].dtype) == 'object' or str(self.X[col].dtype) == 'string':
+                    self.X = pd.concat([self.X, pd.get_dummies(self.X[col], prefix=col, dummy_na=True)], axis=1).drop([col], axis=1)
+            for col in self.y.columns:
+                if str(self.y[col].dtype) == 'object' or str(self.y[col].dtype) == 'string':
+                    self.y = pd.concat([self.y, pd.get_dummies(self.y[col], prefix=col, dummy_na=True)], axis=1).drop([col], axis=1)
         self.M = pd.concat([self.X, self.y], axis=1)
         return None
 
 
     # analyse if this is a regression or classification problem
-    def analyse(self, y_col):
-        if len(self.y[y_col].unique()) > 10 or str(self.y[y_col].dtype) == 'float64':
-            self.strategy = 'regression'
+    def analyse(self, y_cols):
+        if len(y_cols) < 1:
+            self.strategy = ['clustering']
         else:
-            self.strategy = 'classification'
-        print('Problem identified as', self.strategy)
+            strategy = []
+            for y_col in y_cols:
+                if len(self.y[y_col].unique()) > 10 or str(self.y[y_col].dtype) == 'float64':
+                    strategy.append('regression')
+                else:
+                    strategy.append('classification')
+            self.strategy = strategy
+        print('Problem identified as', ', '.join(self.strategy))
         return None
 
 
@@ -212,15 +243,17 @@ class rubia_models:
     def transform(self, who, transform, graph=False):
         size = self.graph_width
         if who == 'X':
-            if transform == 'xnone':
+            if transform == 'None':
                 self.scalerX = None 
                 self.Xt_train = self.X_train
                 self.Xt_test = self.X_test
-            if transform == 'xstandard' or transform == 'xminmax':
-                if transform == 'xstandard':
+            if transform == 'Standard' or transform == 'MinMax' or transform == 'Robust':
+                if transform == 'Standard':
                     self.scalerX = StandardScaler()
-                if transform == 'xminmax':
+                if transform == 'MinMax':
                     self.scalerX = MinMaxScaler()
+                if transform == 'Robust':
+                    self.scalerX = RobustScaler()
                 self.scalerX.fit(self.X_train)
                 self.Xt_train = self.scalerX.transform(self.X_train)
                 self.Xt_test = self.scalerX.transform(self.X_test)
@@ -231,11 +264,11 @@ class rubia_models:
                     plt.title('X-Features after Transformation (training set)')
                     plt.show()   
         if who == 'y':
-            if transform == 'ynone':
+            if transform == 'None':
                 self.scalery = None
                 self.yt_train = self.y_train 
                 self.yt_test = self.y_test   
-            if transform == 'yboxcox':
+            if transform == 'BoxCox':
                 self.yt_train, self.scalery = stats.boxcox(self.y_train)
                 self.yt_train = pd.DataFrame(self.yt_train, columns=[self.y.columns])
                 self.yt_test = stats.boxcox(self.y_test, lmbda=self.scalery) 
@@ -282,7 +315,7 @@ class rubia_models:
         report['Score (VC)'] = 100 * report['Score (std)'] / report['Score (avg)']
         report.sort_values(by='Score (avg)', inplace=True)
         report.drop('Score', axis=1, inplace=True)
-        display(report)
+        print(report)
         print('\n')
         if graph:
             fig, ax = plt.subplots(figsize=(size, 0.5 * size))
@@ -348,7 +381,7 @@ class rubia_models:
         report['Score (VC)'] = 100 * report['Score (std)'] / report['Score (avg)']
         report.sort_values(by='Score (avg)', inplace=True, ascending=False)
         report.drop('Score', axis=1, inplace=True)
-        display(report)
+        print(report)
         print('\n')
         if graph:
             fig, ax = plt.subplots(figsize=(size, 0.5 * size))
@@ -417,7 +450,7 @@ class rubia_models:
 
 
     # evaluate some models
-    def evaluate(self, test_size=0.2, transformX='xnone', transformY='ynone', folds=10, alphas=[], graph=False, metric=''):
+    def evaluate(self, test_size=0.2, transformX='None', transformY='None', folds=10, alphas=[], graph=False, metric=''):
         if self.strategy == 'regression':
             if metric == '': metric = 'neg_mean_squared_error'
             self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(self.X, self.y, test_size=test_size, shuffle=True)
@@ -486,7 +519,7 @@ class rubia_models:
                 plt.xlabel('Score')
                 plt.show()
             else:
-                display(pd.DataFrame(report).T)
+                print(pd.DataFrame(report).T)
         return None
 
 
@@ -519,38 +552,38 @@ def selectDemo(id):
     return df, y_cols, ig_cols
 
 
-# load data as a pandas.dataframe object and pass it to the class
-df, y_col, ignore_cols = selectDemo(0)
+# # load data as a pandas.dataframe object and pass it to the class
+# df, y_col, ignore_cols = selectDemo(0)
 
-# load the class rubia_models and show important info about the dataset
-# flag debug mode to True to show warning messages
-rm = rubia_models(df, debug=False)
-rm.describe(rm.data_raw)
+# # load the class rubia_models and show important info about the dataset
+# # flag debug mode to True to show warning messages
+# rm = rubia_models(df, debug=False)
+# rm.describe(rm.data_raw)
 
-# columns listed as ignored will be discarded while modeling
-# flag graph to true to show some exploratory and correlation graphs on the dataset
-rm.explore(rm.data_raw, y_col, ignore_cols, graph=False) #updates X, y, M
+# # columns listed as ignored will be discarded while modeling
+# # flag graph to true to show some exploratory and correlation graphs on the dataset
+# rm.explore(rm.data_raw, y_col, ignore_cols, graph=False) #updates X, y, M
 
-# encode every column of type object or string to categorical numbers
-rm.encode()
+# # encode every column of type object or string to categorical numbers
+# rm.encode()
 
-# add higher level and interaction terms to the model
-# be carefull when using higher level terms and graphs together, less powerfull hardware can bottleneck with higher complexity
-rm.addTerms(rm.X, rm.y, levels=1, interaction=False, root=False)
-rm.explore(rm.M, y_col, ignore_cols, graph=False) #updates X, y, M
+# # add higher level and interaction terms to the model
+# # be carefull when using higher level terms and graphs together, less powerfull hardware can bottleneck with higher complexity
+# rm.addTerms(rm.X, rm.y, levels=1, interaction=False, root=False)
+# rm.explore(rm.M, y_col, ignore_cols, graph=False) #updates X, y, M
 
-# analyse if this is a regression or a classification problem and evaluate some models
-# when y is float or has more then 10 different classes, the algorithm turns into a regression algorithm automatically
-# else it will perform a classification modeling
-rm.analyse(y_col)
+# # analyse if this is a regression or a classification problem and evaluate some models
+# # when y is float or has more then 10 different classes, the algorithm turns into a regression algorithm automatically
+# # else it will perform a classification modeling
+# rm.analyse(y_col)
 
-# evaluate the performance of a mix of models
-rm.evaluate(test_size=0.3, transformX='xstandard', transformY='ynone', folds=10, alphas=alphas, graph=False, metric='neg_mean_squared_error')
+# # evaluate the performance of a mix of models
+# rm.evaluate(test_size=0.3, transformX='xstandard', transformY='ynone', folds=10, alphas=alphas, graph=False, metric='neg_mean_squared_error')
 
-# apply tuning to the best models
-alphas = 10 ** np.linspace(10, -2, 100) * 0.5
-rm.test('Logistic One vs One', graph=True)
-rm.test('Logistic classifier multinomial', graph=True)
+# # apply tuning to the best models
+# alphas = 10 ** np.linspace(10, -2, 100) * 0.5
+# rm.test('Logistic One vs One', graph=True)
+# rm.test('Logistic classifier multinomial', graph=True)
 
 
 
@@ -577,6 +610,7 @@ rm.test('Logistic classifier multinomial', graph=True)
 # adaptar o rubia_models para receber y no formato multiclass
 # acrescentar gridsearch para os modelos (pode ser na avaliação)
 # acrescentar feature_selection
+# acrescenter encode por hot encoding, não apenas label encoder
 
 
 
@@ -598,7 +632,6 @@ rm.test('Logistic classifier multinomial', graph=True)
 
 # inverso do ravel
 # label = label[:,np.newaxis]
-
 
 
 
@@ -658,9 +691,7 @@ rm.test('Logistic classifier multinomial', graph=True)
 #     print()   
 
 
-
 # estimator.get_params().keys()
-
 
 
 # quanto tem muitas preditoras, uma opcao é eliminar as menos relevantes
@@ -671,38 +702,6 @@ rm.test('Logistic classifier multinomial', graph=True)
 # print(X.shape)
 # X_new = SelectKBest(chi2, k=2).fit_transform(X, y)
 # print(X_new.shape)
-
-
-
-
-# from sklearn.preprocessing import LabelEncoder, OneHotEncoder
-# #---------------------
-# df = pd.DataFrame({
-#     'age':[33,44,22,44,55,22],
-#     'gender':['Male','Female','Male','Female','Male','Male']
-# })
-# #------------------------------
-# le = LabelEncoder()
-# df['gender_tf'] = le.fit_transform(df.gender)
-# print(df)
-# print(OneHotEncoder().fit_transform(df[['gender_tf']]).toarray())
-
-
-
-# 
-# from sklearn.preprocessing import RobustScaler
-
-
-# 1.7 Caracteristicas polinomiais
-# deriva caracteristica nao linear convertendo os dados para um grau maior
-# Usado com Linear Regression para modelo de aprendizado de alto grau
-# from sklearn.preprocessing import PolynomialFeatures
-# #-------------------------
-# df = pd.DataFrame({'A':[1,2,3,4,5], 'B':[2,3,4,5,6]})
-# #----------------------------
-
-# pol = PolynomialFeatures(degree=2)
-# pol.fit_transform(df)
 
 
 
