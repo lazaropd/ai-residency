@@ -16,11 +16,11 @@ from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler, M
 
 from sklearn.model_selection import train_test_split, cross_val_score, KFold, StratifiedKFold
 
-from sklearn.metrics import r2_score
+from sklearn.metrics import r2_score, mean_squared_error
 from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
 
 # regressors
-from sklearn.linear_model import LinearRegression as lr, SGDRegressor as sgdr
+from sklearn.linear_model import LinearRegression as lr, SGDRegressor as sgdr, ElasticNet as enr
 from sklearn.linear_model import Ridge as rr, RidgeCV as rcvr, Lasso as lassor, LassoCV as lassocvr
 from sklearn.neighbors import KNeighborsRegressor as knnr
 from sklearn.tree import DecisionTreeRegressor as dtr
@@ -29,15 +29,15 @@ from sklearn.ensemble import RandomForestRegressor as rfr, AdaBoostRegressor as 
 
 # classifiers
 from sklearn.linear_model import SGDClassifier as sgdc, LogisticRegression as logitc, RidgeClassifier as rc
-from sklearn.neighbors import KNeighborsClassifier as knnc
+from sklearn.neighbors import KNeighborsClassifier as knnc, NearestCentroid as ncc, RadiusNeighborsClassifier as rnc
 from sklearn.tree import DecisionTreeClassifier as dtc
 from sklearn.svm import SVC as svc
 from sklearn.naive_bayes import GaussianNB as gnbc, BernoulliNB as bnbc, MultinomialNB as mnbc
 from sklearn.ensemble import RandomForestClassifier as rfc, GradientBoostingClassifier as gbc
+from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as ldac
 
 # multiclass
 from sklearn.multiclass import OneVsRestClassifier as ovrc, OneVsOneClassifier as ovoc
-
 
 
 
@@ -50,6 +50,7 @@ class rubia_models:
         self.report_width = width
         self.graph_width = 1.3 * width // 10
         self.graphs_expl = []
+        self.graphs_model = []
         self.debug = debug
         if not self.debug: # remove warnings when not running in debug mode
             import warnings
@@ -84,12 +85,20 @@ class rubia_models:
         return None
         
 
-    # run a basic and repetitive EDA for a given pandas dataframe
+    # run a basic and repetitive EDA for a given pandas dataframe and remove constant columns
     def explore(self, df, y_cols, ig_cols, printt=True, graph=False):
         X_cols = [col for col in df.columns if col not in y_cols and col not in ig_cols]
         self.X = df.loc[:, X_cols]
         self.y = df.loc[:, y_cols]
-        self.M = df.loc[:, X_cols + y_cols]
+        for col in self.X.columns:
+            if len(self.X[col].unique()) == 1: 
+                self.X.drop(col, axis=1, inplace=True)
+                print('Column removed (constant value):', col)
+        for col in self.y.columns:
+            if len(self.y[col].unique()) == 1: 
+                self.y.drop(col, axis=1, inplace=True)
+                print('Column removed (constant value):', col)
+        self.M = pd.concat([self.X, self.y], axis=1)
 
         if printt:
             print(self.report_width * '*', '\n*')
@@ -226,7 +235,7 @@ class rubia_models:
     # analyse if this is a regression or classification problem
     def analyse(self, y_cols):
         if len(y_cols) < 1:
-            self.strategy = ['clustering']
+            self.strategy = 'clustering'
         else:
             strategy = []
             for y_col in y_cols:
@@ -234,8 +243,8 @@ class rubia_models:
                     strategy.append('regression')
                 else:
                     strategy.append('classification')
-            self.strategy = strategy
-        print('Problem identified as', ', '.join(self.strategy))
+            self.strategy = 'regression' if 'regression' in strategy else 'classification'
+        print('Problem identified as', self.strategy)
         return None
 
 
@@ -259,9 +268,13 @@ class rubia_models:
                 self.Xt_test = self.scalerX.transform(self.X_test)
                 if graph:
                     fig, ax = plt.subplots(figsize=(size, 0.5 * size))
-                    for i in range(self.Xt_train.shape[1]):
-                        sns.kdeplot(self.Xt_train[:][i])
+                    if self.Xt_train.shape[1] == 1:
+                        sns.kdeplot(self.Xt_train[:,0])
+                    else:
+                        for i in range(self.Xt_train.shape[1]):
+                            sns.kdeplot(self.Xt_train[:,i])
                     plt.title('X-Features after Transformation (training set)')
+                    self.graphs_model.append(fig)
                     plt.show()   
         if who == 'y':
             if transform == 'None':
@@ -269,13 +282,76 @@ class rubia_models:
                 self.yt_train = self.y_train 
                 self.yt_test = self.y_test   
             if transform == 'BoxCox':
-                self.yt_train, self.scalery = stats.boxcox(self.y_train)
-                self.yt_train = pd.DataFrame(self.yt_train, columns=[self.y.columns])
-                self.yt_test = stats.boxcox(self.y_test, lmbda=self.scalery) 
+                # check if negative/null numbers exists
+                miny = self.y.min().item()
+                # if so, add the average of y_train to all y to avoid invalid data during boxcox transf
+                # using the mean makes the model to robust to new and unknown y data
+                deslocy = 0 if miny > 0 else (self.y.mean().item() + 1)                 
+                ytransf = self.y_train + deslocy # add offset if necessary
+                self.yt_train, lambday = stats.boxcox(ytransf)
+                self.scalery = (deslocy, lambday)
+                print(self.y_test + deslocy)
+                self.yt_test = stats.boxcox(self.y_test + deslocy, lmbda=lambday) 
+                if graph:
+                    fig, ax = plt.subplots(figsize=(size, 0.5 * size))
+                    if self.yt_train.shape[1] == 1:
+                        sns.kdeplot(self.yt_train[:,0])
+                    else:
+                        for i in range(self.yt_train.shape[1]):
+                            sns.kdeplot(self.yt_train[:,i])
+                    plt.title('y-Features after Transformation (training set)')
+                    self.graphs_model.append(fig)
+                    plt.show()  
         return None
     
+
+    # apply clustering models (UNFINISHED - ADAPT MODELS AND METRICS TO CLUSTER METHODS)
+    def clustering(self, metric, folds=10, printt=True, graph=False):
+        size = self.graph_width
+
+        models = {}
+        models["Linear regressor"]                  = lr()
+        self.models = models
+
+        kf = KFold(n_splits=folds, shuffle=True)
+        results = []
+        names = []
+        for model_name in models:
+            cv_scores = -1 * cross_val_score(models[model_name], self.Xt_train, cv=kf, scoring=metric)  
+            results.append(cv_scores)
+            names.append(model_name)
+        report = pd.DataFrame({'Model': names, 'Score': results})
+        report['Score (avg)'] = report.Score.apply(lambda x: x.mean())
+        report['Score (std)'] = report.Score.apply(lambda x: x.std())
+        report['Score (VC)'] = 100 * report['Score (std)'] / report['Score (avg)']
+        report.sort_values(by='Score (avg)', inplace=True)
+        report.drop('Score', axis=1, inplace=True)
+        report.reset_index(inplace=True, drop=True)
+        self.report_performance = report
+        
+        if printt:
+            print('\n')
+            print(self.report_width * '*', '\n*')
+            print('* CLUSTERING RESULTS - BEFORE PARAMETERS BOOSTING \n*')
+            print(self.report_width * '*', '')
+            print(report)
+            print('\n')
+
+        if graph:
+            fig, ax = plt.subplots(figsize=(size, 0.5 * size))
+            plt.title('Clustering Comparison')
+            #ax = fig.add_subplot(111)
+            plt.boxplot(results)
+            ax.set_xticklabels(names)
+            plt.xticks(rotation=45)
+            plt.subplots_adjust(hspace=0.0, bottom=0.25)
+            self.graphs_model.append(fig)
+            plt.show()             
+        return None
+
+
     # apply regression models
-    def regression(self, metric, folds=10, alphas=[], graph=False):
+    def regression(self, metric, folds=10, alphas=[], printt=True, graph=False):
         size = self.graph_width
 
         models = {}
@@ -284,6 +360,7 @@ class rubia_models:
         models["Lasso CV regressor"]                = lassocvr()
         models["Ridge regressor"]                   = rr(alpha=0, normalize=True)
         models["Ridge CV regressor"]                = rcvr(alphas = alphas)
+        models["Elastic net regressor"]             = enr()
         models["K nearest neighbors regressor K2u"] = knnr(n_neighbors=2, weights='uniform')
         models["K nearest neighbors regressor K2d"] = knnr(n_neighbors=2, weights='distance')
         models["K nearest neighbors regressor K5"]  = knnr(n_neighbors=5)
@@ -294,29 +371,35 @@ class rubia_models:
         models["Random forest regressor"]           = rfr()
         models["Ada boost regressor"]               = abr()
         models["Gradient boost regressor"]          = gbr()
-        models["Support vector regressor"]          = svr()
+        models["Support vector regressor RBF"]      = svr()
+        models["Support vector regressor Linear"]   = svr('linear')
+        models["Support vector regressor Poly"]     = svr(kernel='poly')
         self.models = models
 
-        print('\n')
-        print(self.report_width * '*', '\n*')
-        print('* REGRESSION RESULTS - BEFORE PARAMETERS BOOSTING \n*')
-        #kf = StratifiedKFold(n_splits=folds, shuffle=True)
         kf = KFold(n_splits=folds, shuffle=True)
         results = []
         names = []
         for model_name in models:
-            cv_scores = -1 * cross_val_score(models[model_name], self.Xt_train, self.yt_train.values.ravel(), cv=kf, scoring=metric)  
+            cv_scores = -1 * cross_val_score(models[model_name], self.Xt_train, self.yt_train, cv=kf, scoring=metric)  
             results.append(cv_scores)
             names.append(model_name)
-        print(self.report_width * '*', '')
-        report = pd.DataFrame({'Regressor': names, 'Score': results})
+        report = pd.DataFrame({'Model': names, 'Score': results})
         report['Score (avg)'] = report.Score.apply(lambda x: x.mean())
         report['Score (std)'] = report.Score.apply(lambda x: x.std())
         report['Score (VC)'] = 100 * report['Score (std)'] / report['Score (avg)']
         report.sort_values(by='Score (avg)', inplace=True)
         report.drop('Score', axis=1, inplace=True)
-        print(report)
-        print('\n')
+        report.reset_index(inplace=True, drop=True)
+        self.report_performance = report
+        
+        if printt:
+            print('\n')
+            print(self.report_width * '*', '\n*')
+            print('* REGRESSION RESULTS - BEFORE PARAMETERS BOOSTING \n*')
+            print(self.report_width * '*', '')
+            print(report)
+            print('\n')
+
         if graph:
             fig, ax = plt.subplots(figsize=(size, 0.5 * size))
             plt.title('Regressor Comparison')
@@ -324,13 +407,14 @@ class rubia_models:
             plt.boxplot(results)
             ax.set_xticklabels(names)
             plt.xticks(rotation=45)
-            plt.subplots_adjust(hspace=0.0)
+            plt.subplots_adjust(hspace=0.0, bottom=0.25)
+            self.graphs_model.append(fig)
             plt.show()             
         return None
 
 
     # apply classification models
-    def classification(self, metric, folds, alphas, graph):
+    def classification(self, metric, folds, printt=True, graph=False):
         size = self.graph_width
 
         if len(self.y.iloc[:,0].unique()) > 2:
@@ -339,12 +423,17 @@ class rubia_models:
             struct = 'binary'
 
         models = {}
+        models["Linear discriminant analysis"]  = ldac()
+        models["Radius neighbors classifier"]  = rnc(radius=5, weights='distance')
+        models["Nearest centroid classifier euclidian"]  = ncc(metric='euclidean')
+        models["Nearest centroid classifier manhattan"]  = ncc(metric='manhattan')
         models["K nearest neighbors classifier K2"]  = knnc(n_neighbors=2)
         models["K nearest neighbors classifier K5"]  = knnc(n_neighbors=5)
         models["K nearest neighbors classifier K10"] = knnc(n_neighbors=10)        
         models["Decision tree classifier"]           = dtc()
-        models["SVM classifier with RBF kernel"]     = svc(gamma='scale')
-        models["SVM classifier with linear kernel"]  = svc(kernel='linear')
+        models["SVM classifier RBF"]                 = svc(gamma='scale')
+        models["SVM classifier Linear"]              = svc(kernel='linear')
+        models["SVM classifier Poly"]              = svc(kernel='poly')
         models["Gaussian naive bayes"]               = gnbc()
         models["Bernoulli naive bayes"]              = bnbc(binarize=0.5)
         models["Multinomial naive bayes"]            = mnbc()
@@ -364,25 +453,30 @@ class rubia_models:
 
         self.models = models
 
-        print('\n')
-        print(self.report_width * '*', '\n*')
-        print('* CLASSIFICATION RESULTS - BEFORE PARAMETERS BOOSTING \n*')
         kf = StratifiedKFold(n_splits=folds, shuffle=True)
         results = []
         names = []
         for model_name in models:
-            cv_scores = cross_val_score(models[model_name], self.Xt_train, self.yt_train.values.ravel(), cv=kf, scoring=metric, error_score=np.nan)  
+            cv_scores = cross_val_score(models[model_name], self.Xt_train, self.yt_train, cv=kf, scoring=metric, error_score=np.nan)  
             results.append(cv_scores)
             names.append(model_name)
-        print(self.report_width * '*', '')
-        report = pd.DataFrame({'Classifier': names, 'Score': results})
+        report = pd.DataFrame({'Model': names, 'Score': results})
         report['Score (avg)'] = report.Score.apply(lambda x: x.mean())
         report['Score (std)'] = report.Score.apply(lambda x: x.std())
         report['Score (VC)'] = 100 * report['Score (std)'] / report['Score (avg)']
         report.sort_values(by='Score (avg)', inplace=True, ascending=False)
         report.drop('Score', axis=1, inplace=True)
-        print(report)
-        print('\n')
+        report.reset_index(inplace=True, drop=True)
+        self.report_performance = report
+
+        if printt:
+            print('\n')
+            print(self.report_width * '*', '\n*')
+            print('* CLASSIFICATION RESULTS - BEFORE PARAMETERS BOOSTING \n*')
+            print(self.report_width * '*', '')
+            print(report)
+            print('\n')
+
         if graph:
             fig, ax = plt.subplots(figsize=(size, 0.5 * size))
             plt.title('Classifier Comparison')
@@ -390,7 +484,8 @@ class rubia_models:
             plt.boxplot(results)
             ax.set_xticklabels(names)
             plt.xticks(rotation=45)
-            plt.subplots_adjust(hspace=0.0)
+            plt.subplots_adjust(hspace=0.0, bottom=0.25)
+            self.graphs_model.append(fig)
             plt.show()             
         return None
 
@@ -398,9 +493,11 @@ class rubia_models:
     # residual analysis for regression problems
     def calc_rss(self, residual):
         return float(((residual) ** 2).sum())         
+    def calc_rmse(self, y, y_hat):
+        return np.sqrt(mean_squared_error(y_hat, y))
     def calc_r2(self, y, y_hat):
         return r2_score(y_hat, y)
-    def residual(self, y, y_hat, model_name, graph=False):
+    def residual(self, y, y_hat, model_name, printt=True, graph=False):
         size = self.graph_width
         # do some data conversion because of different methods data types
         sample_size = len(y_hat)
@@ -411,15 +508,16 @@ class rubia_models:
         res = y - y_hat
         obs = np.arange(1, sample_size+1).reshape(-1, 1)
 
-        print('\n')
-        print(self.report_width * '*', '\n*')
-        print('* MODEL PERFORMANCE \n*')
-        print('* MODEL NAME: ', model_name)
-        print('* TEST SAMPLE SIZE: ', sample_size)
-        print('* RSS: %.2f'%self.calc_rss(res))
-        print('* R2: %.2f'%self.calc_r2(y, y_hat))
-        print('* ')
-        print(self.report_width * '*', '\n')
+        if printt:
+            print('\n')
+            print(self.report_width * '*', '\n*')
+            print('* MODEL PERFORMANCE \n*')
+            print('* MODEL NAME: ', model_name)
+            print('* TEST SAMPLE SIZE: ', sample_size)
+            print('* RSS: %.2f'%self.calc_rss(res))
+            print('* R2: %.2f'%self.calc_r2(y, y_hat))
+            print('* ')
+            print(self.report_width * '*', '\n')
 
         if graph:
             fig, ax = plt.subplots(2, 2, figsize=(size, 0.5 * size))
@@ -445,44 +543,52 @@ class rubia_models:
             x = np.linspace(res.min(), res.max(), 100) 
             h = plt.plot(x, rv.pdf(x), c='b', lw=2)
             ax[1][1].set_title('Residual Histogram', size=14)
+            self.graphs_model.append(fig)
             plt.show()
-        return None
+        return 'RMSE: %.2f | R2: %.2f' % (self.calc_rmse(y, y_hat), self.calc_r2(y, y_hat))
 
 
     # evaluate some models
-    def evaluate(self, test_size=0.2, transformX='None', transformY='None', folds=10, alphas=[], graph=False, metric=''):
+    def evaluate(self, test_size=0.2, transformX='None', transformY='None', folds=10, alphas=[], printt=True, graph=False, metric=''):
+        self.graphs_model = []
         if self.strategy == 'regression':
             if metric == '': metric = 'neg_mean_squared_error'
             self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(self.X, self.y, test_size=test_size, shuffle=True)
             # transform data
             self.transform('X', transformX, graph) #model transf for X_train
             self.transform('y', transformY, graph) #model transf for y_train
-            self.regression(metric, folds, alphas, graph)
-        else:
+            self.regression(metric, folds, alphas, printt, graph)
+        elif self.strategy == 'classification':
             if metric == '': metric = 'accuracy'
             self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(self.X, self.y, test_size=test_size, shuffle=True, stratify=self.y)
             # transform data
             self.transform('X', transformX, graph) #model transf for X_train
             self.transform('y', transformY, graph) #model transf for y_train
-            self.classification(metric, folds, alphas, graph)
+            self.classification(metric, folds, printt, graph)
+        else:
+            if metric == '': metric = 'euclidian'
+            self.X_train, self.X_test = train_test_split(self.X, test_size=test_size, shuffle=True)
+            # transform data
+            self.transform('X', transformX, graph) #model transf for X_train
+            #self.clustering(metric, folds, printt, graph)
         return None
 
 
-    # given a model name, evaluate y_hat/y_pred and the overall performance of such model
-    def test(self, model_name, graph=False):
+    # given a model name, evaluate y_hat/y_pred/clusters and the overall performance of such model
+    def test(self, model_name, printt=True, graph=False):
+        self.graphs_model = []
         size = self.graph_width
         model = self.models[model_name]
-        # fit using the train subset
-        X, y = self.Xt_train, self.yt_train
-        model.fit(X, y)
-
-        # evaluate using the test subset
-        X, y = self.Xt_test, self.yt_test
         
         if self.strategy == 'regression':
+
+            X, y = self.Xt_train, self.yt_train # fit using the train subset
+            model.fit(X, y)
+            X, y = self.Xt_test, self.yt_test # evaluate using the test subset
+        
             y_hat = model.predict(X)
             # show residual analysis
-            self.residual(y, y_hat, model_name, graph)
+            result = self.residual(y, y_hat, model_name, printt, graph)
             if graph:
                 # show the correlation between y and y_hat
                 fig, ax = plt.subplots(figsize=(size, 0.5 * size))
@@ -492,35 +598,50 @@ class rubia_models:
                 plt.plot(y, viewer.fit(y, y_hat).predict(y), color='k')
                 plt.xlabel('Observed')
                 plt.ylabel('Predicted')
+                self.graphs_model.append(fig)
                 plt.show()
+            return result
 
-        else:
+        elif self.strategy == 'classification':
+
+            X, y = self.Xt_train, self.yt_train # fit using the train subset
+            model.fit(X, y)
+            X, y = self.Xt_test, self.yt_test # evaluate using the test subset
+
             y_pred = model.predict(X)
-            sample_size = len(y_pred)
-            print('\n')
-            print(self.report_width * '*', '\n*')
-            print('* MODEL PERFORMANCE \n*')
-            print('* MODEL NAME: ', model_name)
-            print('* TEST SAMPLE SIZE: ', sample_size)
-            print('* ACCURACY: ', round(accuracy_score(y, y_pred)*100, 1), '%')
-            print('* ')
-            print(self.report_width * '*', '\n')
             report = classification_report(y, y_pred, output_dict=True)
+            sample_size = len(y_pred)
+            if printt:
+                print('\n')
+                print(self.report_width * '*', '\n*')
+                print('* MODEL PERFORMANCE \n*')
+                print('* MODEL NAME: ', model_name)
+                print('* TEST SAMPLE SIZE: ', sample_size)
+                print('* ACCURACY: ', round(accuracy_score(y, y_pred)*100, 1), '%')
+                print('* ')
+                print(self.report_width * '*', '\n')
+                if not graph:
+                    print(pd.DataFrame(report).T)
             if graph:
                 fig, ax = plt.subplots(figsize=(size, 0.3 * size))
                 plt.title('Confusion Matrix')
                 sns.heatmap(confusion_matrix(y, y_pred), annot=True, cmap='YlGn', fmt='d',)
                 plt.xlabel('Predicted')
                 plt.ylabel('True Class')
+                self.graphs_model.append(fig)
                 plt.show()
                 fig, ax = plt.subplots(figsize=(size, 0.5 * size))
                 plt.title('Classification Report')
                 sns.heatmap(pd.DataFrame(report).iloc[0:3].T, annot=True, vmin=0, vmax=1, cmap='BrBG', fmt='.2g')
                 plt.xlabel('Score')
+                self.graphs_model.append(fig)
                 plt.show()
-            else:
-                print(pd.DataFrame(report).T)
-        return None
+            return 'Accuracy: ' + str(round(accuracy_score(y, y_pred)*100, 1)) + '%'
+        
+        else:
+            return 'MISSING CLUSTERING BOOST'
+
+
 
 
 
@@ -530,30 +651,30 @@ def selectDemo(id):
     if id == 0:
         data, meta = scipy.io.arff.loadarff('dataset/scene_arff.arff')
         df = pd.DataFrame(data)
-        y_cols = 'Beach'
+        y_cols = ['Beach']
         #y_cols = ['Beach', 'Sunset', 'FallFoliage', 'Field', 'Mountain', 'Urban']
         ignore_cols = ['Sunset', 'FallFoliage', 'Field', 'Mountain', 'Urban']
     elif id == 1:
         df = pd.read_csv('Advertising.csv', index_col=0)
-        y_cols = 'sales'
+        y_cols = ['sales']
         ignore_cols = []
     elif id == 2:
         df = pd.read_csv('SAheart.csv')
-        y_cols = 'chd'
+        y_cols = ['chd']
         ignore_cols = []
     elif id == 3:
         df = pd.read_csv('pima-indians-diabetes.csv')
-        y_cols = 'Class'
+        y_cols = ['Class']
         ignore_cols = []
     else:
         df = pd.read_csv('iris.csv')
-        y_cols = 'species'
+        y_cols = ['species']
         ignore_cols = []
-    return df, y_cols, ig_cols
+    return df, y_cols, ignore_cols
 
 
 # # load data as a pandas.dataframe object and pass it to the class
-# df, y_col, ignore_cols = selectDemo(0)
+# df, y_cols, ignore_cols = selectDemo(0)
 
 # # load the class rubia_models and show important info about the dataset
 # # flag debug mode to True to show warning messages
@@ -562,26 +683,28 @@ def selectDemo(id):
 
 # # columns listed as ignored will be discarded while modeling
 # # flag graph to true to show some exploratory and correlation graphs on the dataset
-# rm.explore(rm.data_raw, y_col, ignore_cols, graph=False) #updates X, y, M
+# rm.explore(rm.data_raw, y_cols, ignore_cols, graph=False) #updates X, y, M
 
 # # encode every column of type object or string to categorical numbers
-# rm.encode()
+# rm.encode(encoder='LabelEncoder')
 
 # # add higher level and interaction terms to the model
 # # be carefull when using higher level terms and graphs together, less powerfull hardware can bottleneck with higher complexity
 # rm.addTerms(rm.X, rm.y, levels=1, interaction=False, root=False)
-# rm.explore(rm.M, y_col, ignore_cols, graph=False) #updates X, y, M
+# rm.explore(rm.M, y_cols, ignore_cols, graph=False) #updates X, y, M
 
-# # analyse if this is a regression or a classification problem and evaluate some models
+# # analyse if this is a regression, classification or clustering problem and evaluate some models
 # # when y is float or has more then 10 different classes, the algorithm turns into a regression algorithm automatically
 # # else it will perform a classification modeling
-# rm.analyse(y_col)
+# # in multilevel problems, if one of the ys is identified as regression, then the entire process is set to regression mode
+# # this routine also drops any column of constant value, if it exists
+# rm.analyse(y_cols)
 
 # # evaluate the performance of a mix of models
-# rm.evaluate(test_size=0.3, transformX='xstandard', transformY='ynone', folds=10, alphas=alphas, graph=False, metric='neg_mean_squared_error')
+# alphas = 10 ** np.linspace(10, -2, 100) * 0.5
+# rm.evaluate(test_size=0.3, transformX='Standard', transformY='None', folds=10, alphas=alphas, graph=False)
 
 # # apply tuning to the best models
-# alphas = 10 ** np.linspace(10, -2, 100) * 0.5
 # rm.test('Logistic One vs One', graph=True)
 # rm.test('Logistic classifier multinomial', graph=True)
 
@@ -593,11 +716,11 @@ def selectDemo(id):
 
 
 # To get all coefficients for a given model:
-#   lasso.coef_, lassocv.coef_, ridge.coef_, ridgecv.coef_
+#   lassor.coef_, lassocvr.coef_, rr.coef_, rcvr.coef_
 #   rfc.feature_importances_
 #   logit.classes_, coef_, intercept_, n_iter_
 #   nbc.class_count_, class_prior_, classes_, sigma_, theta_
-
+#   ldac.explained_variance_ratio_
 
 
 
@@ -606,13 +729,13 @@ def selectDemo(id):
 # TO DO
 
 
+# adaptar o rubia_models para receber y no formato multioutput (unscreduled)
 
-# adaptar o rubia_models para receber y no formato multiclass
 # acrescentar gridsearch para os modelos (pode ser na avaliação)
 # acrescentar feature_selection
-# acrescenter encode por hot encoding, não apenas label encoder
+# acrescentar métodos de agrupamento e test para eles
 
-
+# testar e adaptar modelos e feature selection para volumes de dados maiores
 
 # mudar o alphas para um dict com params
 # dentro de regression e classification, extrair os params do dict
@@ -621,36 +744,7 @@ def selectDemo(id):
 # BALANCEAR CLASSES
 
 
-# from sklearn.linear_model import ElasticNet
-# rnc = RadiusNeighborsClassifier(radius=5, weights='distance')
 
-# from sklearn.neighbors.nearest_centroid import NearestCentroid
-
-# svc = SVC(kernel='poly')
-# svc = SVC(kernel='linear')
-
-
-# inverso do ravel
-# label = label[:,np.newaxis]
-
-
-
-# porque meu MNB nao funciona??? 
-# from sklearn.naive_bayes import MultinomialNB
-# from sklearn.metrics import confusion_matrix
-
-
-# train_x, test_x, train_y, test_y = train_test_split(data_1, data.chd)
-# mnb = MultinomialNB(class_prior=[.25,.75])
-# mnb.fit(train_x,train_y)
-# y_pred = mnb.predict(test_x)
-# print(confusion_matrix(y_true=test_y,y_pred=y_pred))
-# print('Score MultinomialNB: ',mnb.score(test_x,test_y))
-
-
-
-
-#
 # from sklearn.feature_selection import SelectKBest, chi2
 # # selecionar um modelo para otimizar
     

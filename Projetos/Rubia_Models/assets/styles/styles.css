@@ -122,6 +122,7 @@ div.element-container{
 /* now we can deep in our widgets setup */
 div.element-container > div.Widget:not(.stNumberInput):not(.stTimeInput):not(.stDateInput):not(.stTextInput):not(.stTextArea):not(.stSelectbox):not(.stMultiSelect):not(.stSlider):not(.stFileUploader){
     width: max-content !important;
+    min-width: 200px;
 }
 .stFileUploader > div > div{padding: 50px !important;}
 .stFileUploader .uploadOverlay{box-shadow: none !important;}

@@ -32,7 +32,7 @@ css = 'assets/styles/styles.css'
 
 # session management
 
-state = SessionState.get(screen='home', admin=True, file='', rm=None)
+state = SessionState.get(screen='home', admin=True, file='', rm=None, success=False)
 
 
 
@@ -143,7 +143,8 @@ st.sidebar.markdown('<div class="spacediv"></div>', unsafe_allow_html=True)
 
 # show data segmentation filters
 if state.rm: 
-    y_cols = ph_s1.multiselect('Target columns (ys)', state.rm.data_raw.columns)
+    y_cols = [ph_s1.selectbox('Target column (y)', ['Unsupervised'] + list(state.rm.data_raw.columns))]
+    if y_cols == ['Unsupervised']: y_cols = []
     ignore_cols = ph_s2.multiselect('Ignore features (xs)', state.rm.data_raw.columns)
     set_order = ph_s3.slider('Model of order', 1, 3, 2)
     set_trainingsize = ph_s4.slider('Training size', 0., 1., 0.3) 
@@ -166,6 +167,7 @@ ph_c5 = st.empty()
 ph_c51 = st.empty()
 ph_c52 = st.empty()
 ph_c6 = st.empty()
+ph_c7 = st.empty()
 st.markdown('---')
 
 if not state.rm:
@@ -187,7 +189,8 @@ else:
         st.write(state.rm.data_raw.describe(include='all').T)
 
     graph = ph_c2.checkbox('Exploratory graphs')  
-    state.rm.explore(state.rm.data_raw, y_cols, ignore_cols, printt=False, graph=graph) #updates X, y, M
+    state.rm.explore(state.rm.data_raw, y_cols, ignore_cols, printt=False, graph=graph) #updates X, y, M and remove constant columns
+    y_cols = list(state.rm.y.columns) # update the list of y columns after an EDA
 
     if ph_c3.checkbox('Show features'):  
         st.title('FEATURE EXTRACTION REPORT')
@@ -199,9 +202,10 @@ else:
         for fig in state.rm.graphs_expl:
             st.pyplot(fig)     
 
-    if ph_c4.checkbox('Encode'): # encode non numeric or numeric like columns
+    if ph_c4.checkbox('Encode', True): # encode non numeric or numeric like columns
         if ph_c41.checkbox('One Hot Encoder'):
             state.rm.encode(encoder='OneHotEncoder')
+            y_cols = list(state.rm.y.columns) # update the list of y columns after a One Hot Encode process
         else:
             state.rm.encode(encoder='LabelEncoder')
 
@@ -210,32 +214,55 @@ else:
         add_root = ph_c52.checkbox('Add root')
         state.rm.addTerms(state.rm.X, state.rm.y, levels=set_order, interaction=add_inter, root=add_root)
     
-    state.rm.explore(state.rm.M, y_cols, ignore_cols, printt=False, graph=graph) #updates X, y, M
+    state.rm.explore(state.rm.M, y_cols, ignore_cols, printt=False, graph=graph) #updates X, y, M and remove constant columns
+    y_cols = list(state.rm.y.columns) # update the list of y columns after an EDA
 
     ph_b1 = st.empty()
     ph_b2 = st.empty()
     
+    state.rm.analyse(y_cols) # decide the model type (regr, class, cluster)
+    # only apply y transformation for single variable regression
+    if state.rm.strategy != 'regression' or len(y_cols) > 1:
+        ph_s6.empty()
+        ytransform = 'None'
+
     graphm = ph_c6.checkbox('Modeling graphs')
-    if ph_b1.button('EVALUATE'):
-        state.rm.analyse(y_cols)
-        st.title('AUTO MODELING')
-        st.write(', '.join(state.rm.strategy))
-        
+
+    if ph_b1.button('EVALUATE'): # start the evaluation and performance tests
         alphas = 10 ** np.linspace(10, -2, 100) * 0.5
-        state.rm.evaluate(test_size=set_trainingsize, transformX=xtransform, transformY=ytransform, folds=10, alphas=alphas, graph=graphm)
+        state.rm.evaluate(test_size=set_trainingsize, transformX=xtransform, transformY=ytransform, folds=10, alphas=alphas, printt=False, graph=graphm)
+        st.title('RESULTS - BEFORE BOOSTING')
+        st.write(state.rm.report_performance)
 
+        # boost the best model
+        best = state.rm.report_performance.Model.iloc[0]
+        st.success(best)
+        state.success = True
+        if graphm: # show graphs for model evaluation and overall performance
+            for fig in state.rm.graphs_model:
+                st.pyplot(fig)     
 
-    
-    
-    st.title('POST-PROCESSING DATA SAMPLE')
-    st.write(state.rm.M.sample(10)) 
+    if state.success: # show advanced boosting parameters
+        st.title('BOOSTING')
+        boost = st.selectbox('Choose a model to boost', state.rm.report_performance.Model)
+        st.success('Boosting model: ' + str(boost))
+        if st.button('Choose & Boost'):
+            result = state.rm.test(str(boost), printt=False, graph=graphm)
+            st.success(result)
+            if graphm: # show graphs for model evaluation and overall performance
+                for fig in state.rm.graphs_model:
+                    st.pyplot(fig)     
 
+    if not state.success:
+        st.title('AUTO MODELING - ' + state.rm.strategy.upper())
+
+    if ph_c7.checkbox('Show data sample'):
+        st.title('POST-PROCESSING DATA SAMPLE (X|y)')
+        st.write(state.rm.X.head(5))
+        st.write(state.rm.y.head(5)) 
 
     if ph_b2.button('CLEAR ALL'):
         state.rm = None
-        ph_b1.empty()
-
-
-
-
+        state.success = False
+        #ph_b1.empty()
 
