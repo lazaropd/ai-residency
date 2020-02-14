@@ -70,15 +70,16 @@ def loadTxt(filename):
 #
 ##############################################################
 
-@st.cache
+
 def loadCSS():
     print('CSS', np.random.random())
     style = """<style>%s</style>""" % loadTxt(css)
     style_MD = """<style><link href='https://fonts.googleapis.com/icon?family=Material+Icons' rel='stylesheet'></style>"""
     
     style = style.replace('LOGO_WIDE', encodeImg(img_logow))
-    style = style.replace('BG_PORTRAIT', encodeImg(img_bg_portrait))
-    style = style.replace('BG_LANDSCAPE', encodeImg(img_bg_landscape))
+    if not state.rm:
+        style = style.replace('BG_PORTRAIT', encodeImg(img_bg_portrait))
+        style = style.replace('BG_LANDSCAPE', encodeImg(img_bg_landscape))
 
     return style + style_MD
 
@@ -130,9 +131,11 @@ st.sidebar.markdown('---')
 ph_s1 = st.sidebar.empty()
 ph_s2 = st.sidebar.empty()
 ph_s3 = st.sidebar.empty()
+ph_s31 = st.sidebar.empty()
 ph_s4 = st.sidebar.empty()
 ph_s5 = st.sidebar.empty()
 ph_s6 = st.sidebar.empty()
+ph_s7 = st.sidebar.empty()
 st.sidebar.markdown('---')
 
 # little hack to have the File Uploader styling - this class runs differently on streamlit 0.55
@@ -147,9 +150,10 @@ if state.rm:
     if y_cols == ['Unsupervised']: y_cols = []
     ignore_cols = ph_s2.multiselect('Ignore features (xs)', state.rm.data_raw.columns)
     set_order = ph_s3.slider('Model of order', 1, 3, 2)
-    set_trainingsize = ph_s4.slider('Training size', 0., 1., 0.3) 
+    set_trainingsize = ph_s4.slider('Test size', 0., 1., 0.3) 
     xtransform = ph_s5.selectbox('Transformation on X', ['None','Standard','MinMax','Robust'])
     ytransform = ph_s6.selectbox('Transformation on y', ['None','BoxCox'])
+    balance_tol = ph_s7.slider('Auto balance tolerance', 0., 1., 0.3)
 
 
 ##############################################################
@@ -192,12 +196,6 @@ else:
     state.rm.explore(state.rm.data_raw, y_cols, ignore_cols, printt=False, graph=graph) #updates X, y, M and remove constant columns
     y_cols = list(state.rm.y.columns) # update the list of y columns after an EDA
 
-    if ph_c3.checkbox('Show features'):  
-        st.title('FEATURE EXTRACTION REPORT')
-        st.write('X: ', ' | '.join(state.rm.X.columns))
-        st.write('y: ', ' | '.join(state.rm.y.columns)) 
-        st.write('M: ', (state.rm.X.shape), '|', state.rm.y.shape)
-
     if graph: # show graphs for exploratory analysis
         for fig in state.rm.graphs_expl:
             st.pyplot(fig)     
@@ -208,6 +206,12 @@ else:
             y_cols = list(state.rm.y.columns) # update the list of y columns after a One Hot Encode process
         else:
             state.rm.encode(encoder='LabelEncoder')
+
+    # add auto balance correction if applicable/selected
+    if balance_tol > 0 and len(y_cols) == 1:
+        state.rm.balance(balance_tol, state.rm.M, y_cols, ignore_cols)
+    else:
+        ph_s7.empty()
 
     if ph_c5.checkbox('Non linear'): # add more complex terms (non linear transformations of X)
         add_inter = ph_c51.checkbox('Add interaction')
@@ -225,6 +229,16 @@ else:
     if state.rm.strategy != 'regression' or len(y_cols) > 1:
         ph_s6.empty()
         ytransform = 'None'
+
+    countk = len(state.rm.X.columns)
+    kbest = ph_s31.slider('Limit K best features', 1, countk, 10 if countk > 10 else countk)
+    if kbest != len(state.rm.X.columns): state.rm.redux(k=kbest)
+    
+    if ph_c3.checkbox('Show features'):  
+        st.title('FEATURE EXTRACTION REPORT')
+        st.write('X: ', ' | '.join(state.rm.X.columns))
+        st.write('y: ', ' | '.join(state.rm.y.columns)) 
+        st.write('M: ', (state.rm.X.shape), '|', state.rm.y.shape)
 
     graphm = ph_c6.checkbox('Modeling graphs')
 

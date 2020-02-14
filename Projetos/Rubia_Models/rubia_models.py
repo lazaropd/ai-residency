@@ -39,6 +39,9 @@ from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as ldac
 # multiclass
 from sklearn.multiclass import OneVsRestClassifier as ovrc, OneVsOneClassifier as ovoc
 
+# redux
+from sklearn.feature_selection import SelectKBest, chi2
+
 
 
 class rubia_models:
@@ -192,13 +195,13 @@ class rubia_models:
             if interaction:
                 for comb in combinations_with_replacement(n,k):
                     comb = list(comb)
-                    self.X['*'.join(comb)] = self.calcTerms(X, comb)
+                    self.X['_'.join(comb)] = self.calcTerms(X, comb)
             # or just the polynomial terms if interaction = False
             else:
                 for col in cols:
                     for order in range(2, k+1):
                         comb = [col for elem in range(1, order+1)]
-                        self.X['*'.join(comb)] = self.calcTerms(X, comb)
+                        self.X['_'.join(comb)] = self.calcTerms(X, comb)
         if root:
             for col in cols:
                 comb = [col]
@@ -232,7 +235,30 @@ class rubia_models:
         return None
 
 
+    # auto balance the dataset M 
+    # only when classes equal or less than 10 classes
+    def balance(self, tol, df, y_cols, ig_cols):
+        if len(y_cols) == 1:
+            y_col = y_cols[0]
+            if len(df[y_col].unique()) <= 10:
+                size_before = len(df)
+                size_smallest = df[y_col].value_counts().min()
+                newdf = pd.DataFrame()
+                for yclass in df[y_col].unique():
+                    sample = df.loc[df[y_col]==yclass].sample(size_smallest)
+                    newdf = pd.concat([newdf, sample], axis=0)
+                size_after = len(newdf)
+                if (abs(size_after-size_before)/size_before) < tol:
+                    X_cols = [col for col in newdf.columns if col not in y_cols and col not in ig_cols]
+                    self.X = newdf.loc[:, X_cols]
+                    self.y = newdf.loc[:, y_cols]
+                    self.M = pd.concat([self.X, self.y], axis=1)
+                    print(self.M.shape)
+        return None
+
+
     # analyse if this is a regression or classification problem
+    # more than 10 classes transforms the process automatically to regression
     def analyse(self, y_cols):
         if len(y_cols) < 1:
             self.strategy = 'clustering'
@@ -245,6 +271,18 @@ class rubia_models:
                     strategy.append('classification')
             self.strategy = 'regression' if 'regression' in strategy else 'classification'
         print('Problem identified as', self.strategy)
+        return None
+
+
+    # dimensionality reduction
+    def redux(self, k=10):
+        if k == 'auto':
+            k = 10 # require deeper implementation
+        selector = SelectKBest(chi2, k=k)
+        best_features = selector.fit_transform(self.X, self.y)
+        mask = selector.get_support(indices=True)
+        self.X = self.X.iloc[:,mask]
+        self.M = pd.concat([self.X, self.y], axis=1)
         return None
 
 
@@ -384,8 +422,8 @@ class rubia_models:
             results.append(cv_scores)
             names.append(model_name)
         report = pd.DataFrame({'Model': names, 'Score': results})
-        report['Score (avg)'] = report.Score.apply(lambda x: x.mean())
-        report['Score (std)'] = report.Score.apply(lambda x: x.std())
+        report['Score (avg)'] = report.Score.apply(lambda x: np.sqrt(x).mean())
+        report['Score (std)'] = report.Score.apply(lambda x: np.sqrt(x).std())
         report['Score (VC)'] = 100 * report['Score (std)'] / report['Score (avg)']
         report.sort_values(by='Score (avg)', inplace=True)
         report.drop('Score', axis=1, inplace=True)
@@ -424,7 +462,6 @@ class rubia_models:
 
         models = {}
         models["Linear discriminant analysis"]  = ldac()
-        models["Radius neighbors classifier"]  = rnc(radius=5, weights='distance')
         models["Nearest centroid classifier euclidian"]  = ncc(metric='euclidean')
         models["Nearest centroid classifier manhattan"]  = ncc(metric='manhattan')
         models["K nearest neighbors classifier K2"]  = knnc(n_neighbors=2)
@@ -514,7 +551,7 @@ class rubia_models:
             print('* MODEL PERFORMANCE \n*')
             print('* MODEL NAME: ', model_name)
             print('* TEST SAMPLE SIZE: ', sample_size)
-            print('* RSS: %.2f'%self.calc_rss(res))
+            print('* RMSE: %.2f'%self.calc_rmse(y, y_hat))
             print('* R2: %.2f'%self.calc_r2(y, y_hat))
             print('* ')
             print(self.report_width * '*', '\n')
@@ -655,58 +692,77 @@ def selectDemo(id):
         #y_cols = ['Beach', 'Sunset', 'FallFoliage', 'Field', 'Mountain', 'Urban']
         ignore_cols = ['Sunset', 'FallFoliage', 'Field', 'Mountain', 'Urban']
     elif id == 1:
-        df = pd.read_csv('Advertising.csv', index_col=0)
+        df = pd.read_csv('dataset/Advertising.csv', index_col=0)
         y_cols = ['sales']
         ignore_cols = []
     elif id == 2:
-        df = pd.read_csv('SAheart.csv')
+        df = pd.read_csv('dataset/SAheart.csv')
         y_cols = ['chd']
         ignore_cols = []
     elif id == 3:
-        df = pd.read_csv('pima-indians-diabetes.csv')
+        df = pd.read_csv('dataset/pima-indians-diabetes.csv')
         y_cols = ['Class']
         ignore_cols = []
+    elif id == 4:
+        df = pd.read_excel('dataset/sample.xlsx')
+        y_cols = ['g1']
+        ignore_cols = ['g2', 'y', 'yr']       
+    elif id == 5:
+        df = pd.read_excel('dataset/sample.xlsx')
+        y_cols = ['yr']
+        ignore_cols = ['g1', 'g2', 'y']    
     else:
-        df = pd.read_csv('iris.csv')
+        df = pd.read_csv('dataset/iris.csv')
         y_cols = ['species']
         ignore_cols = []
     return df, y_cols, ignore_cols
 
+run_demo = True
+id = 2
+graph = False
+balance_tol = 0.3
+if run_demo:
+    # load data as a pandas.dataframe object and pass it to the class
+    df, y_cols, ignore_cols = selectDemo(id)
 
-# # load data as a pandas.dataframe object and pass it to the class
-# df, y_cols, ignore_cols = selectDemo(0)
+    # load the class rubia_models and show important info about the dataset
+    # flag debug mode to True to show warning messages
+    rm = rubia_models(df, debug=False)
+    rm.describe(rm.data_raw)
 
-# # load the class rubia_models and show important info about the dataset
-# # flag debug mode to True to show warning messages
-# rm = rubia_models(df, debug=False)
-# rm.describe(rm.data_raw)
+    # columns listed as ignored will be discarded while modeling
+    # flag graph to true to show some exploratory and correlation graphs on the dataset
+    rm.explore(rm.data_raw, y_cols, ignore_cols, graph=graph) #updates X, y, M
 
-# # columns listed as ignored will be discarded while modeling
-# # flag graph to true to show some exploratory and correlation graphs on the dataset
-# rm.explore(rm.data_raw, y_cols, ignore_cols, graph=False) #updates X, y, M
+    # encode every column of type object or string to categorical numbers
+    rm.encode(encoder='LabelEncoder')
 
-# # encode every column of type object or string to categorical numbers
-# rm.encode(encoder='LabelEncoder')
+    # this method makes an auto balance for each class, using the minority class
+    # only applies if the dataset size variation is under tolerance value
+    rm.balance(balance_tol, rm.M, y_cols, ignore_cols)
 
-# # add higher level and interaction terms to the model
-# # be carefull when using higher level terms and graphs together, less powerfull hardware can bottleneck with higher complexity
-# rm.addTerms(rm.X, rm.y, levels=1, interaction=False, root=False)
-# rm.explore(rm.M, y_cols, ignore_cols, graph=False) #updates X, y, M
+    # add higher level and interaction terms to the model
+    # be carefull when using higher level terms and graphs together, less powerfull hardware can bottleneck with higher complexity
+    rm.addTerms(rm.X, rm.y, levels=2, interaction=False, root=False)
+    rm.explore(rm.M, y_cols, ignore_cols, graph=graph) #updates X, y, M
 
-# # analyse if this is a regression, classification or clustering problem and evaluate some models
-# # when y is float or has more then 10 different classes, the algorithm turns into a regression algorithm automatically
-# # else it will perform a classification modeling
-# # in multilevel problems, if one of the ys is identified as regression, then the entire process is set to regression mode
-# # this routine also drops any column of constant value, if it exists
-# rm.analyse(y_cols)
+    # analyse if this is a regression, classification or clustering problem and evaluate some models
+    # when y is float or has more then 10 different classes, the algorithm turns into a regression algorithm automatically
+    # else it will perform a classification modeling
+    # in multilevel problems, if one of the ys is identified as regression, then the entire process is set to regression mode
+    # this routine also drops any column of constant value, if it exists
+    rm.analyse(y_cols)
 
-# # evaluate the performance of a mix of models
-# alphas = 10 ** np.linspace(10, -2, 100) * 0.5
-# rm.evaluate(test_size=0.3, transformX='Standard', transformY='None', folds=10, alphas=alphas, graph=False)
+    # dimensionality reduction
+    if len(rm.X.columns) > 10: rm.redux(k=10)
 
-# # apply tuning to the best models
-# rm.test('Logistic One vs One', graph=True)
-# rm.test('Logistic classifier multinomial', graph=True)
+    # evaluate the performance of a mix of models
+    alphas = 10 ** np.linspace(10, -2, 100) * 0.5
+    rm.evaluate(test_size=0.3, transformX='Standard', transformY='None', folds=10, alphas=alphas, graph=graph)
+
+    # apply tuning to the best models
+    rm.test(str(rm.report_performance.Model.iloc[0]), graph=graph)
+
 
 
 
@@ -729,73 +785,63 @@ def selectDemo(id):
 # TO DO
 
 
-# adaptar o rubia_models para receber y no formato multioutput (unscreduled)
+# implement multioutput (not planned)
+# adjust redux(k='auto') to calculate the optimal value for k (not planned)
 
 # acrescentar gridsearch para os modelos (pode ser na avaliação)
-# acrescentar feature_selection
 # acrescentar métodos de agrupamento e test para eles
-
-# testar e adaptar modelos e feature selection para volumes de dados maiores
 
 # mudar o alphas para um dict com params
 # dentro de regression e classification, extrair os params do dict
 
 
-# BALANCEAR CLASSES
 
 
 
-# from sklearn.feature_selection import SelectKBest, chi2
-# # selecionar um modelo para otimizar
-    
-# pipetree = Pipeline([('scl', StandardScaler()), ('clf', DecisionTreeClassifier())])
-# pipe = [pipetree]    
 
-# param_range = [3, 5]
-# grid_params = [{'clf__criterion': ['gini', 'entropy'],
-#                 'clf__max_depth': param_range,
-#                 'clf__min_samples_leaf': param_range,
-#                 'clf__min_samples_split': param_range[1:]
-#               }]
+def optimize():    
+    pipetree = Pipeline([('scl', StandardScaler()), ('clf', DecisionTreeClassifier())])
+    pipe = [pipetree]    
 
-
-# scores = ['accuracy', 'recall_macro', 'precision_macro']
-# for score in scores:
-    
-#     kfolds = StratifiedKFold(n_splits=2, shuffle=True)
-#     cv = kfolds.split(X_train, y_train)
-
-#     print("\n\n# Tuning hyper-parameters for %s" % score)
-#     gs = GridSearchCV(estimator=pipetree, param_grid=grid_params, scoring=score, cv=cv)
-#     gs.fit(X_train, y_train)
-#     print('\nBest accuracy: %.3f' % gs.best_score_)
-#     print('\nBest params:\n', gs.best_params_)
-
-#     print("\nGrid scores on development set:")
-#     means = gs.cv_results_['mean_test_score']
-#     stds = gs.cv_results_['std_test_score']
-#     for mean, std, params in zip(means, stds, gs.cv_results_['params']):
-#         print("%0.3f (+/-%0.03f) for %r"
-#               % (mean, std * 2, params))
-    
-#     print("\nClassification report:")
-#     print()
-#     y_true, y_pred = y_test, gs.predict(X_test)
-#     print(classification_report(y_true, y_pred))
-#     print()   
+    param_range = [3, 5]
+    grid_params = [{'clf__criterion': ['gini', 'entropy'],
+                    'clf__max_depth': param_range,
+                    'clf__min_samples_leaf': param_range,
+                    'clf__min_samples_split': param_range[1:]
+                }]
 
 
-# estimator.get_params().keys()
+    scores = ['accuracy', 'recall_macro', 'precision_macro']
+    for score in scores:
+        
+        kfolds = StratifiedKFold(n_splits=2, shuffle=True)
+        cv = kfolds.split(X_train, y_train)
+
+        print("\n\n# Tuning hyper-parameters for %s" % score)
+        gs = GridSearchCV(estimator=pipetree, param_grid=grid_params, scoring=score, cv=cv)
+        gs.fit(X_train, y_train)
+        print('\nBest accuracy: %.3f' % gs.best_score_)
+        print('\nBest params:\n', gs.best_params_)
+
+        print("\nGrid scores on development set:")
+        means = gs.cv_results_['mean_test_score']
+        stds = gs.cv_results_['std_test_score']
+        for mean, std, params in zip(means, stds, gs.cv_results_['params']):
+            print("%0.3f (+/-%0.03f) for %r"
+                % (mean, std * 2, params))
+        
+        print("\nClassification report:")
+        print()
+        y_true, y_pred = y_test, gs.predict(X_test)
+        print(classification_report(y_true, y_pred))
+        print()   
 
 
-# quanto tem muitas preditoras, uma opcao é eliminar as menos relevantes
-# from sklearn.datasets import load_iris
-# from sklearn.feature_selection import SelectKBest
-# from sklearn.feature_selection import chi2
-# X, y = load_iris(return_X_y=True)
-# print(X.shape)
-# X_new = SelectKBest(chi2, k=2).fit_transform(X, y)
-# print(X_new.shape)
+#estimator.get_params().keys()
+
+
+
+
 
 
 
