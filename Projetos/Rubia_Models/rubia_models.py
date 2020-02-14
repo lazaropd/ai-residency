@@ -12,6 +12,8 @@ from scipy.io import arff
 
 from itertools import combinations_with_replacement
 
+import sklearn
+
 from sklearn.preprocessing import LabelEncoder, OneHotEncoder, StandardScaler, MinMaxScaler, RobustScaler
 
 from sklearn.model_selection import train_test_split, cross_val_score, KFold, StratifiedKFold
@@ -41,6 +43,10 @@ from sklearn.multiclass import OneVsRestClassifier as ovrc, OneVsOneClassifier a
 
 # redux
 from sklearn.feature_selection import SelectKBest, chi2
+
+# pipeline and optimization
+from sklearn.pipeline import Pipeline
+from sklearn.model_selection import GridSearchCV
 
 
 
@@ -253,7 +259,6 @@ class rubia_models:
                     self.X = newdf.loc[:, X_cols]
                     self.y = newdf.loc[:, y_cols]
                     self.M = pd.concat([self.X, self.y], axis=1)
-                    print(self.M.shape)
         return None
 
 
@@ -347,6 +352,7 @@ class rubia_models:
     def clustering(self, metric, folds=10, printt=True, graph=False):
         size = self.graph_width
 
+        # significant model setup differences should be list as different models
         models = {}
         models["Linear regressor"]                  = lr()
         self.models = models
@@ -392,6 +398,7 @@ class rubia_models:
     def regression(self, metric, folds=10, alphas=[], printt=True, graph=False):
         size = self.graph_width
 
+        # significant model setup differences should be list as different models
         models = {}
         models["Linear regressor"]                  = lr()
         models["Lasso regressor"]                   = lassor()
@@ -460,24 +467,25 @@ class rubia_models:
         else:
             struct = 'binary'
 
+        # significant model setup differences should be list as different models
         models = {}
-        models["Linear discriminant analysis"]  = ldac()
-        models["Nearest centroid classifier euclidian"]  = ncc(metric='euclidean')
-        models["Nearest centroid classifier manhattan"]  = ncc(metric='manhattan')
-        models["K nearest neighbors classifier K2"]  = knnc(n_neighbors=2)
-        models["K nearest neighbors classifier K5"]  = knnc(n_neighbors=5)
-        models["K nearest neighbors classifier K10"] = knnc(n_neighbors=10)        
-        models["Decision tree classifier"]           = dtc()
-        models["SVM classifier RBF"]                 = svc(gamma='scale')
-        models["SVM classifier Linear"]              = svc(kernel='linear')
-        models["SVM classifier Poly"]              = svc(kernel='poly')
-        models["Gaussian naive bayes"]               = gnbc()
-        models["Bernoulli naive bayes"]              = bnbc(binarize=0.5)
-        models["Multinomial naive bayes"]            = mnbc()
-        models["SGD classifier"]                     = sgdc(max_iter=10000)
-        models["Ridge classifier"]                   = rc()
-        models["Random forest classifier"]           = rfc(n_estimators=100)
-        models["Gradient boosting classifier"]       = gbc()
+        models["Linear discriminant analysis"]          = ldac()
+        models["Nearest centroid classifier euclidian"] = ncc(metric='euclidean')
+        models["Nearest centroid classifier manhattan"] = ncc(metric='manhattan')
+        models["K nearest neighbors classifier K2"]     = knnc(n_neighbors=2)
+        models["K nearest neighbors classifier K5"]     = knnc(n_neighbors=5)
+        models["K nearest neighbors classifier K10"]    = knnc(n_neighbors=10)        
+        models["Decision tree classifier"]              = dtc()
+        models["SVM classifier RBF"]                    = svc(gamma='scale')
+        models["SVM classifier Linear"]                 = svc(kernel='linear')
+        models["SVM classifier Poly"]                   = svc(kernel='poly')
+        models["Gaussian naive bayes"]                  = gnbc()
+        models["Bernoulli naive bayes"]                 = bnbc(binarize=0.5)
+        models["Multinomial naive bayes"]               = mnbc()
+        models["SGD classifier"]                        = sgdc(max_iter=10000)
+        models["Ridge classifier"]                      = rc()
+        models["Random forest classifier"]              = rfc(n_estimators=100)
+        models["Gradient boosting classifier"]          = gbc()
 
         if struct == 'multiclass':
             models["Logistic classifier multinomial"]= logitc(multi_class='multinomial', solver='lbfgs')
@@ -611,11 +619,73 @@ class rubia_models:
         return None
 
 
+    # given a model, do a grid search for parameters optimization
+    def boost(self, model): 
+
+        # n_tests is used to create linspaced values for some grid parameters
+        n_tests = 10
+        alphas = 10 ** np.linspace(10, -2, n_tests) * 0.5 
+        percs = np.linspace(0, 1, n_tests) 
+
+        params = list(model.get_params().keys())
+        grid_params = {}
+        # use all processors
+        
+        if 'n_jobs' in params: grid_params.update({'clf__n_jobs':[-1]})
+        if 'shrinkage' in params: grid_params.update({'clf__shrinkage':percs})
+        if isinstance(model, sklearn.discriminant_analysis.LinearDiscriminantAnalysis):
+            if 'solver' in params: grid_params.update({'clf__solver':['svd','lsqr','eigen']})
+        if 'n_neighbors' in params: grid_params.update({'clf__n_neighbors':[2, 3, 5, 8, 12]})
+        if 'weights' in params: grid_params.update({'clf__weights':['uniform','distance']})
+        if 'p' in params: grid_params.update({'clf__p':[1, 2]})
+        if 'C' in params: grid_params.update({'clf__C':[1, 10, 100, 1000]})
+        if 'penalty' in params: grid_params.update({'clf__penalty':['l1','l2','elasticnet','none']})
+        if 'multi_class' in params: grid_params.update({'clf__multi_class':['auto','ovr','multinomial']})
+        if 'estimator__C' in params: grid_params.update({'clf__C':[1, 10, 100, 1000]})
+        if 'estimator__penalty' in params: grid_params.update({'clf__penalty':['l1','l2','elasticnet','none']})
+        if 'estimator__multi_class' in params: grid_params.update({'clf__multi_class':['auto','ovr','multinomial']})
+        if 'kernel' in params: grid_params.update({'clf__kernel':['linear','rbf','sigmoid']})
+        if 'alpha' in params: grid_params.update({'clf__alphas':alphas})
+        if 'loss' in params: grid_params.update({'clf__loss':['hinge','log','modified_huber','squared_hinge','perceptron']})
+
+        print(params)
+        grid_params = [grid_params]
+        print('\n\n',grid_params)
+
+        pipe = Pipeline([('scl', StandardScaler()), ('clf', model)])
+        # pipe = [pipetree]    
+
+        # scores = ['accuracy', 'recall_macro', 'precision_macro']
+        if self.strategy == 'classification' and len(grid_params) > 0:
+            scores = ['accuracy']
+            for score in scores:
+                kfolds = StratifiedKFold(n_splits=2, shuffle=True)
+                cv = kfolds.split(self.X_train, self.y_train)
+                print("\n\n# Tuning hyper-parameters for %s" % score)
+                gs = GridSearchCV(estimator=pipe, param_grid=grid_params, scoring=score, cv=cv)
+                gs.fit(self.X_train, self.y_train)
+                print('\nBest accuracy: %.3f' % gs.best_score_)
+                print('\nBest params:\n', gs.best_params_)
+                print("\nGrid scores on development set:")
+                means = gs.cv_results_['mean_test_score']
+                stds = gs.cv_results_['std_test_score']
+                for mean, std, params in zip(means, stds, gs.cv_results_['params']):
+                    print("%0.3f (+/-%0.03f) for %r" % (mean, std * 2, params))
+                print("\nClassification report:")
+                print()
+                y_true, y_pred = self.y_test, gs.predict(self.X_test)
+                print(classification_report(y_true, y_pred))
+                print()  
+        return None 
+
+
     # given a model name, evaluate y_hat/y_pred/clusters and the overall performance of such model
-    def test(self, model_name, printt=True, graph=False):
+    def optimize(self, model_name, printt=True, graph=False):
         self.graphs_model = []
         size = self.graph_width
         model = self.models[model_name]
+
+        self.boost(model)
         
         if self.strategy == 'regression':
 
@@ -718,7 +788,7 @@ def selectDemo(id):
     return df, y_cols, ignore_cols
 
 run_demo = True
-id = 2
+id = -1
 graph = False
 balance_tol = 0.3
 if run_demo:
@@ -761,10 +831,7 @@ if run_demo:
     rm.evaluate(test_size=0.3, transformX='Standard', transformY='None', folds=10, alphas=alphas, graph=graph)
 
     # apply tuning to the best models
-    rm.test(str(rm.report_performance.Model.iloc[0]), graph=graph)
-
-
-
+    rm.optimize(str(rm.report_performance.Model.iloc[0]), graph=graph)
 
 
 
@@ -780,89 +847,14 @@ if run_demo:
 
 
 
-
-
 # TO DO
 
+# salvar o best model e adaptar a optimize para mostrar os resultados usando ele
+# arrumar os prints em optimize e boost
+# implementar optimize e boost para regression e clustering
+# acrescentar métodos de agrupamento e test para eles
+
+# corrigir os NaNs com a multinomial naive bayes
 
 # implement multioutput (not planned)
 # adjust redux(k='auto') to calculate the optimal value for k (not planned)
-
-# acrescentar gridsearch para os modelos (pode ser na avaliação)
-# acrescentar métodos de agrupamento e test para eles
-
-# mudar o alphas para um dict com params
-# dentro de regression e classification, extrair os params do dict
-
-
-
-
-
-
-def optimize():    
-    pipetree = Pipeline([('scl', StandardScaler()), ('clf', DecisionTreeClassifier())])
-    pipe = [pipetree]    
-
-    param_range = [3, 5]
-    grid_params = [{'clf__criterion': ['gini', 'entropy'],
-                    'clf__max_depth': param_range,
-                    'clf__min_samples_leaf': param_range,
-                    'clf__min_samples_split': param_range[1:]
-                }]
-
-
-    scores = ['accuracy', 'recall_macro', 'precision_macro']
-    for score in scores:
-        
-        kfolds = StratifiedKFold(n_splits=2, shuffle=True)
-        cv = kfolds.split(X_train, y_train)
-
-        print("\n\n# Tuning hyper-parameters for %s" % score)
-        gs = GridSearchCV(estimator=pipetree, param_grid=grid_params, scoring=score, cv=cv)
-        gs.fit(X_train, y_train)
-        print('\nBest accuracy: %.3f' % gs.best_score_)
-        print('\nBest params:\n', gs.best_params_)
-
-        print("\nGrid scores on development set:")
-        means = gs.cv_results_['mean_test_score']
-        stds = gs.cv_results_['std_test_score']
-        for mean, std, params in zip(means, stds, gs.cv_results_['params']):
-            print("%0.3f (+/-%0.03f) for %r"
-                % (mean, std * 2, params))
-        
-        print("\nClassification report:")
-        print()
-        y_true, y_pred = y_test, gs.predict(X_test)
-        print(classification_report(y_true, y_pred))
-        print()   
-
-
-#estimator.get_params().keys()
-
-
-
-
-
-
-
-# X, y = make_blobs(n_features=2, n_samples=1000, cluster_std=2, centers = 2)
-# #---------Plotting----------------------
-# #f = plt.figure()
-# #plt.scatter(X[:,0], X[:,1], c=y, s=10)
-# #plt.show()
-# #-------------------------------------
-# h = .02
-# x_min = X[:,0].min() - .5
-# x_max = X[:,0].max() + .5
-# y_min = X[:,1].min() - .5
-# y_max = X[:,1].max() + .5
-# xx, yy = np.meshgrid(np.arange(x_min,x_max,h), np.arange(y_min,y_max,h))
-# #---------------------------------------
-# lr = LogisticRegression()
-# lr.fit(X,y)
-# Z = lr.predict(np.c_[xx.ravel(),yy.ravel()])
-# #--------------------------------------
-# Z = Z.reshape(xx.shape)
-# plt.pcolormesh(xx,yy,Z, cmap=plt.cm.Paired)
-# plt.scatter(X[:,0],X[:,1], c=y, s=10)
-# plt.show()

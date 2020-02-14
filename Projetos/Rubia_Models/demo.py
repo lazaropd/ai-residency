@@ -261,7 +261,7 @@ else:
         boost = st.selectbox('Choose a model to boost', state.rm.report_performance.Model)
         st.success('Boosting model: ' + str(boost))
         if st.button('Choose & Boost'):
-            result = state.rm.test(str(boost), printt=False, graph=graphm)
+            result = state.rm.optimize(str(boost), printt=False, graph=graphm)
             st.success(result)
             if graphm: # show graphs for model evaluation and overall performance
                 for fig in state.rm.graphs_model:
