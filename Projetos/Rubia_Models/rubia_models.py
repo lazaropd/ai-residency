@@ -275,7 +275,7 @@ class rubia_models:
                 else:
                     strategy.append('classification')
             self.strategy = 'regression' if 'regression' in strategy else 'classification'
-        print('Problem identified as', self.strategy)
+        # print('Problem identified as', self.strategy)
         return None
 
 
@@ -620,62 +620,81 @@ class rubia_models:
 
 
     # given a model, do a grid search for parameters optimization
-    def boost(self, model): 
+    def boost(self, model, printt=True): 
 
         # n_tests is used to create linspaced values for some grid parameters
         n_tests = 10
         alphas = 10 ** np.linspace(10, -2, n_tests) * 0.5 
         percs = np.linspace(0, 1, n_tests) 
+        groups = [2, 3, 5, 10]
+        pot10 = [1, 10, 100, 1000]
 
         params = list(model.get_params().keys())
         grid_params = {}
-        # use all processors
-        
+
+        # use all processors n_jobs=-1        
         if 'n_jobs' in params: grid_params.update({'clf__n_jobs':[-1]})
         if 'shrinkage' in params: grid_params.update({'clf__shrinkage':percs})
         if isinstance(model, sklearn.discriminant_analysis.LinearDiscriminantAnalysis):
             if 'solver' in params: grid_params.update({'clf__solver':['svd','lsqr','eigen']})
-        if 'n_neighbors' in params: grid_params.update({'clf__n_neighbors':[2, 3, 5, 8, 12]})
+        if 'n_neighbors' in params: grid_params.update({'clf__n_neighbors':groups})
         if 'weights' in params: grid_params.update({'clf__weights':['uniform','distance']})
         if 'p' in params: grid_params.update({'clf__p':[1, 2]})
-        if 'C' in params: grid_params.update({'clf__C':[1, 10, 100, 1000]})
+        if 'C' in params: grid_params.update({'clf__C':pot10})
         if 'penalty' in params: grid_params.update({'clf__penalty':['l1','l2','elasticnet','none']})
         if 'multi_class' in params: grid_params.update({'clf__multi_class':['auto','ovr','multinomial']})
-        if 'estimator__C' in params: grid_params.update({'clf__C':[1, 10, 100, 1000]})
+        if 'estimator__C' in params: grid_params.update({'clf__C':pot10})
         if 'estimator__penalty' in params: grid_params.update({'clf__penalty':['l1','l2','elasticnet','none']})
         if 'estimator__multi_class' in params: grid_params.update({'clf__multi_class':['auto','ovr','multinomial']})
         if 'kernel' in params: grid_params.update({'clf__kernel':['linear','rbf','sigmoid']})
-        if 'alpha' in params: grid_params.update({'clf__alphas':alphas})
-        if 'loss' in params: grid_params.update({'clf__loss':['hinge','log','modified_huber','squared_hinge','perceptron']})
+        if self.strategy == 'classification':
+            if 'alpha' in params: grid_params.update({'clf__alphas':alphas})
+            if 'loss' in params: grid_params.update({'clf__loss':['hinge','log','modified_huber','squared_hinge','perceptron']})
+            if 'criterion' in params: grid_params.update({'clf__criterion':['gini','entropy']})
+        if self.strategy == 'regression':
+            if 'loss' in params: grid_params.update({'clf__loss':['ls','lad','huber']})
+        if 'max_depth' in params: grid_params.update({'clf__max_depth':groups[:-1]})
+        if 'min_samples_leaf' in params: grid_params.update({'clf__min_samples_leaf':groups})
+        if 'n_estimators' in params: grid_params.update({'clf__n_estimators':pot10})
 
+        # temporary, use this to improve the gridsearch process
         print(params)
         grid_params = [grid_params]
-        print('\n\n',grid_params)
+        print(grid_params, '\n')
 
         pipe = Pipeline([('scl', StandardScaler()), ('clf', model)])
-        # pipe = [pipetree]    
+        
+        if self.strategy == 'regression': # and len(grid_params) > 0:
+            scores = ['neg_mean_squared_error']
+            # scores = ['neg_mean_squared_error']
+            for score in scores:
+                kfolds = KFold(n_splits=2, shuffle=True)
+                cv = kfolds.split(self.X_train, self.y_train)
+                gs = GridSearchCV(estimator=pipe, param_grid=grid_params, scoring=score, cv=cv)
+                gs.fit(self.X_train, self.y_train)
 
-        # scores = ['accuracy', 'recall_macro', 'precision_macro']
-        if self.strategy == 'classification' and len(grid_params) > 0:
+        if self.strategy == 'classification': # and len(grid_params) > 0:
             scores = ['accuracy']
+            # scores = ['accuracy', 'recall_macro', 'precision_macro']
             for score in scores:
                 kfolds = StratifiedKFold(n_splits=2, shuffle=True)
                 cv = kfolds.split(self.X_train, self.y_train)
-                print("\n\n# Tuning hyper-parameters for %s" % score)
                 gs = GridSearchCV(estimator=pipe, param_grid=grid_params, scoring=score, cv=cv)
                 gs.fit(self.X_train, self.y_train)
-                print('\nBest accuracy: %.3f' % gs.best_score_)
-                print('\nBest params:\n', gs.best_params_)
-                print("\nGrid scores on development set:")
-                means = gs.cv_results_['mean_test_score']
-                stds = gs.cv_results_['std_test_score']
-                for mean, std, params in zip(means, stds, gs.cv_results_['params']):
-                    print("%0.3f (+/-%0.03f) for %r" % (mean, std * 2, params))
-                print("\nClassification report:")
-                print()
-                y_true, y_pred = self.y_test, gs.predict(self.X_test)
-                print(classification_report(y_true, y_pred))
-                print()  
+
+        self.best_model = gs.best_estimator_
+        if printt:
+            print(self.report_width * '*', '\n*')
+            print('* HYPER-PARAMETER TUNING REPORT\n*')
+            print("* SCORING METHOD: %s" % score)
+            if self.strategy == 'regression':
+                print('* BEST SCORE: %.3f' % (-gs.best_score_))
+            if self.strategy == 'classification':
+                print('* BEST SCORE: %.1f %%' % (100 * gs.best_score_))
+            print('* BEST PARAMS:', gs.best_params_)
+            print('*\n', self.report_width * '*')
+            print(self.best_model)
+
         return None 
 
 
@@ -684,16 +703,11 @@ class rubia_models:
         self.graphs_model = []
         size = self.graph_width
         model = self.models[model_name]
-
-        self.boost(model)
+        self.boost(model, printt) # grid search hyper parameters for this model
         
         if self.strategy == 'regression':
-
-            X, y = self.Xt_train, self.yt_train # fit using the train subset
-            model.fit(X, y)
-            X, y = self.Xt_test, self.yt_test # evaluate using the test subset
-        
-            y_hat = model.predict(X)
+            X, y = self.X_test, self.y_test # evaluate using the test subset
+            y_hat = self.best_model.predict(X)
             # show residual analysis
             result = self.residual(y, y_hat, model_name, printt, graph)
             if graph:
@@ -710,12 +724,8 @@ class rubia_models:
             return result
 
         elif self.strategy == 'classification':
-
-            X, y = self.Xt_train, self.yt_train # fit using the train subset
-            model.fit(X, y)
-            X, y = self.Xt_test, self.yt_test # evaluate using the test subset
-
-            y_pred = model.predict(X)
+            X, y = self.X_test, self.y_test # evaluate using the test subset
+            y_pred = self.best_model.predict(X)
             report = classification_report(y, y_pred, output_dict=True)
             sample_size = len(y_pred)
             if printt:
@@ -788,9 +798,10 @@ def selectDemo(id):
     return df, y_cols, ignore_cols
 
 run_demo = True
-id = -1
+id = 2
 graph = False
 balance_tol = 0.3
+order = 1
 if run_demo:
     # load data as a pandas.dataframe object and pass it to the class
     df, y_cols, ignore_cols = selectDemo(id)
@@ -813,7 +824,7 @@ if run_demo:
 
     # add higher level and interaction terms to the model
     # be carefull when using higher level terms and graphs together, less powerfull hardware can bottleneck with higher complexity
-    rm.addTerms(rm.X, rm.y, levels=2, interaction=False, root=False)
+    rm.addTerms(rm.X, rm.y, levels=order, interaction=False, root=False)
     rm.explore(rm.M, y_cols, ignore_cols, graph=graph) #updates X, y, M
 
     # analyse if this is a regression, classification or clustering problem and evaluate some models
@@ -849,8 +860,6 @@ if run_demo:
 
 # TO DO
 
-# salvar o best model e adaptar a optimize para mostrar os resultados usando ele
-# arrumar os prints em optimize e boost
 # implementar optimize e boost para regression e clustering
 # acrescentar métodos de agrupamento e test para eles
 

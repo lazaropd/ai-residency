@@ -263,6 +263,7 @@ else:
         if st.button('Choose & Boost'):
             result = state.rm.optimize(str(boost), printt=False, graph=graphm)
             st.success(result)
+            st.write(state.rm.best_model)
             if graphm: # show graphs for model evaluation and overall performance
                 for fig in state.rm.graphs_model:
                     st.pyplot(fig)     
