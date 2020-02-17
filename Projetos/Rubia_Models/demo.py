@@ -136,6 +136,7 @@ ph_s4 = st.sidebar.empty()
 ph_s5 = st.sidebar.empty()
 ph_s6 = st.sidebar.empty()
 ph_s7 = st.sidebar.empty()
+ph_s71 = st.sidebar.empty()
 st.sidebar.markdown('---')
 
 # little hack to have the File Uploader styling - this class runs differently on streamlit 0.55
@@ -210,6 +211,7 @@ else:
     # add auto balance correction if applicable/selected
     if balance_tol > 0 and len(y_cols) == 1:
         state.rm.balance(balance_tol, state.rm.M, y_cols, ignore_cols)
+        ph_s71.warning('**Raw data samples:** %d  \n**Balanced samples:** %d' % (state.rm.data_raw.shape[0], state.rm.M.shape[0]))
     else:
         ph_s7.empty()
 
@@ -250,20 +252,21 @@ else:
 
         # boost the best model
         best = state.rm.report_performance.Model.iloc[0]
-        st.success(best)
+        st.success('**Best model:** ' + best)
         state.success = True
         if graphm: # show graphs for model evaluation and overall performance
             for fig in state.rm.graphs_model:
-                st.pyplot(fig)     
+                st.pyplot(fig)      
 
     if state.success: # show advanced boosting parameters
         st.title('BOOSTING')
         boost = st.selectbox('Choose a model to boost', state.rm.report_performance.Model)
-        st.success('Boosting model: ' + str(boost))
+        st.success('**Boosting model:** ' + str(boost))
         if st.button('Choose & Boost'):
+            st.title('HYPER-PARAMETER TUNING REPORT')
             result = state.rm.optimize(str(boost), printt=False, graph=graphm)
-            st.success(result)
             st.write(state.rm.best_model)
+            st.success(result)
             if graphm: # show graphs for model evaluation and overall performance
                 for fig in state.rm.graphs_model:
                     st.pyplot(fig)     

@@ -1,4 +1,6 @@
 
+import time
+
 import numpy as np
 import pandas as pd
 
@@ -360,11 +362,14 @@ class rubia_models:
         kf = KFold(n_splits=folds, shuffle=True)
         results = []
         names = []
+        et = []
         for model_name in models:
+            start = time.time()
             cv_scores = -1 * cross_val_score(models[model_name], self.Xt_train, cv=kf, scoring=metric)  
             results.append(cv_scores)
             names.append(model_name)
-        report = pd.DataFrame({'Model': names, 'Score': results})
+            et.append((time.time() - start))
+        report = pd.DataFrame({'Model': names, 'Score': results, 'Elapsed Time': et})
         report['Score (avg)'] = report.Score.apply(lambda x: x.mean())
         report['Score (std)'] = report.Score.apply(lambda x: x.std())
         report['Score (VC)'] = 100 * report['Score (std)'] / report['Score (avg)']
@@ -424,11 +429,14 @@ class rubia_models:
         kf = KFold(n_splits=folds, shuffle=True)
         results = []
         names = []
+        et = []
         for model_name in models:
+            start = time.time()
             cv_scores = -1 * cross_val_score(models[model_name], self.Xt_train, self.yt_train, cv=kf, scoring=metric)  
             results.append(cv_scores)
             names.append(model_name)
-        report = pd.DataFrame({'Model': names, 'Score': results})
+            et.append((time.time() - start))
+        report = pd.DataFrame({'Model': names, 'Score': results, 'Elapsed Time': et})
         report['Score (avg)'] = report.Score.apply(lambda x: np.sqrt(x).mean())
         report['Score (std)'] = report.Score.apply(lambda x: np.sqrt(x).std())
         report['Score (VC)'] = 100 * report['Score (std)'] / report['Score (avg)']
@@ -501,11 +509,14 @@ class rubia_models:
         kf = StratifiedKFold(n_splits=folds, shuffle=True)
         results = []
         names = []
+        et = []
         for model_name in models:
+            start = time.time()
             cv_scores = cross_val_score(models[model_name], self.Xt_train, self.yt_train, cv=kf, scoring=metric, error_score=np.nan)  
             results.append(cv_scores)
             names.append(model_name)
-        report = pd.DataFrame({'Model': names, 'Score': results})
+            et.append((time.time() - start))
+        report = pd.DataFrame({'Model': names, 'Score': results, 'Elapsed Time': et})
         report['Score (avg)'] = report.Score.apply(lambda x: x.mean())
         report['Score (std)'] = report.Score.apply(lambda x: x.std())
         report['Score (VC)'] = 100 * report['Score (std)'] / report['Score (avg)']
@@ -662,7 +673,10 @@ class rubia_models:
         grid_params = [grid_params]
         print(grid_params, '\n')
 
-        pipe = Pipeline([('scl', StandardScaler()), ('clf', model)])
+        if self.scalerX != 'None':
+            pipe = Pipeline([('scl', self.scalerX), ('clf', model)])
+        else:
+            pipe = Pipeline([('clf', model)])
         
         if self.strategy == 'regression': # and len(grid_params) > 0:
             scores = ['neg_mean_squared_error']
@@ -867,3 +881,5 @@ if run_demo:
 
 # implement multioutput (not planned)
 # adjust redux(k='auto') to calculate the optimal value for k (not planned)
+# add help menu with highlights for each model type, pros and cons (not planned)
+# weight CV and model constraints while choosing the best model type, for similar performances (not planned)
