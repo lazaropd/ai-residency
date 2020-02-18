@@ -12,7 +12,7 @@ import scipy
 from scipy import stats
 from scipy.io import arff
 
-from itertools import combinations_with_replacement
+from itertools import cycle, islice, combinations_with_replacement, product
 
 import sklearn
 
@@ -40,10 +40,21 @@ from sklearn.naive_bayes import GaussianNB as gnbc, BernoulliNB as bnbc, Multino
 from sklearn.ensemble import RandomForestClassifier as rfc, GradientBoostingClassifier as gbc
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis as ldac
 
+# clustering
+from sklearn.metrics import silhouette_score
+from sklearn.neighbors import kneighbors_graph
+from sklearn.cluster import estimate_bandwidth
+from sklearn.cluster import KMeans as kmg, MeanShift as msg, MiniBatchKMeans as mbg
+from sklearn.cluster import AgglomerativeClustering as acg, SpectralClustering as scg, AffinityPropagation as apg
+from sklearn.cluster import DBSCAN as dbg, OPTICS as optg, Birch as big
+from sklearn.mixture import GaussianMixture as gmg
+
+
 # multiclass
 from sklearn.multiclass import OneVsRestClassifier as ovrc, OneVsOneClassifier as ovoc
 
 # redux
+from sklearn.decomposition import PCA
 from sklearn.feature_selection import SelectKBest, chi2
 
 # pipeline and optimization
@@ -282,13 +293,25 @@ class rubia_models:
 
 
     # dimensionality reduction
-    def redux(self, k=10):
+    def redux(self, k=10, mode='chi-square', transform='None'):
         if k == 'auto':
             k = 10 # require deeper implementation
-        selector = SelectKBest(chi2, k=k)
-        best_features = selector.fit_transform(self.X, self.y)
-        mask = selector.get_support(indices=True)
-        self.X = self.X.iloc[:,mask]
+        if mode == 'chi-square':
+            selector = SelectKBest(chi2, k=k)
+            best_features = selector.fit_transform(self.X, self.y)
+            mask = selector.get_support(indices=True)
+            self.X = self.X.iloc[:,mask]
+        elif mode == 'pca':
+            if transform != 'None':
+                scaler = MinMaxScaler() # only minmax supported right now
+                self.scalerX_prepca = scaler.fit(self.X)
+                scaledX = self.scalerX_prepca.transform(self.X)
+            else:
+                scaledX = self.X
+            self.scalerX_pca = PCA(n_components=k).fit(scaledX)
+            X_pca = pd.DataFrame(self.scalerX_pca.transform(scaledX))
+            X_pca.columns = ['PC_%d'%(i+1) for i in range(k)]
+            self.X = X_pca
         self.M = pd.concat([self.X, self.y], axis=1)
         return None
 
@@ -300,7 +323,7 @@ class rubia_models:
             if transform == 'None':
                 self.scalerX = None 
                 self.Xt_train = self.X_train
-                self.Xt_test = self.X_test
+                if len(self.X_test) > 0: self.Xt_test = self.X_test
             if transform == 'Standard' or transform == 'MinMax' or transform == 'Robust':
                 if transform == 'Standard':
                     self.scalerX = StandardScaler()
@@ -310,7 +333,7 @@ class rubia_models:
                     self.scalerX = RobustScaler()
                 self.scalerX.fit(self.X_train)
                 self.Xt_train = self.scalerX.transform(self.X_train)
-                self.Xt_test = self.scalerX.transform(self.X_test)
+                if len(self.X_test) > 0: self.Xt_test = self.scalerX.transform(self.X_test)
                 if graph:
                     fig, ax = plt.subplots(figsize=(size, 0.5 * size))
                     if self.Xt_train.shape[1] == 1:
@@ -350,31 +373,75 @@ class rubia_models:
         return None
     
 
-    # apply clustering models (UNFINISHED - ADAPT MODELS AND METRICS TO CLUSTER METHODS)
-    def clustering(self, metric, folds=10, printt=True, graph=False):
+    # apply clustering models
+    def clustering(self, metric, printt=True, graph=False):
         size = self.graph_width
+        X = np.array(self.Xt_train)
 
         # significant model setup differences should be list as different models
+        bandwidth = estimate_bandwidth(X, quantile=0.3)
+        connectivity = kneighbors_graph(X, n_neighbors=5, include_self=False)
+        # make connectivity symmetric
+        connectivity = 0.5 * (connectivity + connectivity.T)
         models = {}
-        models["Linear regressor"]                  = lr()
+        models["KMeans K2"]             = kmg(n_clusters=2)
+        models["KMeans K5"]             = kmg(n_clusters=5)
+        models["KMeans K10"]            = kmg(n_clusters=10)
+        models["Mean Shift"]            = msg(bandwidth=bandwidth, bin_seeding=True)
+        models["Mini Batch K5"]         = mbg(n_clusters=5)
+        models["Agglomerative Ward K5"] = acg(n_clusters=5, linkage='ward', connectivity=connectivity)
+        models["Agglomerative Avg K5"]  = acg(linkage="average", affinity="cityblock", n_clusters=5, connectivity=connectivity)
+        models["Spectral K5"]           = scg(n_clusters=5, eigen_solver='arpack', affinity="nearest_neighbors")
+        models["DBScan"]                = dbg(eps=0.5, min_samples=10)
+        models["Optics"]                = optg(min_samples=10, xi=0.05, min_cluster_size=0.1)
+        models["Affinity Propagation"]  = apg(damping=0.9, preference=-200)
+        models["Birch K5"]              = big(n_clusters=5)
+        models["Gaussian Mixture K5"]   = gmg(n_components=5, covariance_type='full')
+        
         self.models = models
 
-        kf = KFold(n_splits=folds, shuffle=True)
-        results = []
+        # for clustering methods, evaluation of best model will be delegated visually to the user
         names = []
         et = []
+        results = []
+        ROWS, COLS = len(models) // 3 + (1 if len(models) % 3 != 0 else 0), 3
+        fig, ax = plt.subplots(figsize=(0.85 * size, ROWS * 0.2 * size))
+        fig.suptitle('Clustering Analysis', fontsize=18)
+        #plt.figure(figsize=(size, ROWS * 0.2 * size))
+        plt.subplots_adjust(left=.02, right=.98, bottom=.001, top=.93, wspace=.03, hspace=.20)
+        plot_num = 1
         for model_name in models:
             start = time.time()
-            cv_scores = -1 * cross_val_score(models[model_name], self.Xt_train, cv=kf, scoring=metric)  
-            results.append(cv_scores)
+            models[model_name].fit(X)
+            if hasattr(models[model_name], 'labels_'):
+                y_pred = models[model_name].labels_.astype(np.int)
+            else:
+                y_pred = models[model_name].predict(X)
+            if len(np.unique(y_pred)) > 1:
+                results.append(silhouette_score(X, y_pred, metric=metric))
+            else:
+                results.append(0)
+            elapsed = (time.time() - start)
             names.append(model_name)
-            et.append((time.time() - start))
-        report = pd.DataFrame({'Model': names, 'Score': results, 'Elapsed Time': et})
-        report['Score (avg)'] = report.Score.apply(lambda x: x.mean())
-        report['Score (std)'] = report.Score.apply(lambda x: x.std())
-        report['Score (VC)'] = 100 * report['Score (std)'] / report['Score (avg)']
-        report.sort_values(by='Score (avg)', inplace=True)
-        report.drop('Score', axis=1, inplace=True)
+            et.append(elapsed)
+            plt.subplot(ROWS, COLS, plot_num)
+            plt.title(model_name, size=14)
+            colors = np.array(list(islice(cycle(['#377eb8', '#ff7f00', '#4daf4a',
+                                                '#f781bf', '#a65628', '#984ea3',
+                                                '#999999', '#e41a1c', '#dede00']),
+                                        int(max(y_pred) + 1))))
+            # add gray color for outliers (if any)
+            colors = np.append(colors, ["#bbbbbb"])
+            plt.scatter(X[:, 0], X[:, 1], s=10, color=colors[y_pred])
+            plt.xticks(())
+            plt.yticks(())
+            plt.text(.99, .01, ('%.2fs' % elapsed).lstrip('0'), transform=plt.gca().transAxes, size=14, horizontalalignment='right')
+            plot_num += 1
+        self.graphs_model.append(fig)
+        plt.show()  
+
+        report = pd.DataFrame({'Model': names, 'Elapsed Time': et, 'Score (silhouette)': results})
+        report.sort_values(by='Score (silhouette)', ascending=False, inplace=True)
         report.reset_index(inplace=True, drop=True)
         self.report_performance = report
         
@@ -388,10 +455,10 @@ class rubia_models:
 
         if graph:
             fig, ax = plt.subplots(figsize=(size, 0.5 * size))
-            plt.title('Clustering Comparison')
-            #ax = fig.add_subplot(111)
-            plt.boxplot(results)
-            ax.set_xticklabels(names)
+            ax.set_xticks(np.arange(len(report)))
+            plt.title('Clustering Time Comparison (seconds)')
+            plt.plot(report['Score (silhouette)'])
+            ax.set_xticklabels(report.Model)
             plt.xticks(rotation=45)
             plt.subplots_adjust(hspace=0.0, bottom=0.25)
             self.graphs_model.append(fig)
@@ -621,17 +688,18 @@ class rubia_models:
             self.transform('X', transformX, graph) #model transf for X_train
             self.transform('y', transformY, graph) #model transf for y_train
             self.classification(metric, folds, printt, graph)
-        else:
-            if metric == '': metric = 'euclidian'
-            self.X_train, self.X_test = train_test_split(self.X, test_size=test_size, shuffle=True)
+        elif self.strategy == 'clustering':
+            if metric == '': metric = 'euclidean'
+            self.X_train = self.X
+            self.X_test = pd.DataFrame()
             # transform data
             self.transform('X', transformX, graph) #model transf for X_train
-            #self.clustering(metric, folds, printt, graph)
+            self.clustering(metric, printt, graph)
         return None
 
 
     # given a model, do a grid search for parameters optimization
-    def boost(self, model, printt=True): 
+    def boost(self, model, printt=True, fixed={}): 
 
         # n_tests is used to create linspaced values for some grid parameters
         n_tests = 10
@@ -639,11 +707,14 @@ class rubia_models:
         percs = np.linspace(0, 1, n_tests) 
         groups = [2, 3, 5, 10]
         pot10 = [1, 10, 100, 1000]
+        samples = [5, 10, 30]
+        quarts = [0.25, 0.5, 0.75]
 
         params = list(model.get_params().keys())
         grid_params = {}
 
-        # use all processors n_jobs=-1        
+        # use all processors n_jobs=-1     
+        # list parameters range for the more common hyper parameters    
         if 'n_jobs' in params: grid_params.update({'clf__n_jobs':[-1]})
         if 'shrinkage' in params: grid_params.update({'clf__shrinkage':percs})
         if isinstance(model, sklearn.discriminant_analysis.LinearDiscriminantAnalysis):
@@ -667,9 +738,21 @@ class rubia_models:
         if 'max_depth' in params: grid_params.update({'clf__max_depth':groups[:-1]})
         if 'min_samples_leaf' in params: grid_params.update({'clf__min_samples_leaf':groups})
         if 'n_estimators' in params: grid_params.update({'clf__n_estimators':pot10})
+        if 'n_clusters' in params: grid_params.update({'clf__n_clusters':groups})
+        if 'n_components' in params: grid_params.update({'clf__n_components':groups})
+        if not isinstance(model, sklearn.cluster.DBSCAN):
+            if 'algorithm' in params: grid_params.update({'clf__algorithm':['full','elkan']})
+        if 'eps' in params: grid_params.update({'clf__eps':quarts})
+        if 'min_samples' in params: grid_params.update({'clf__min_samples':samples})
+        if 'linkage' in params: grid_params.update({'clf__linkage':['ward','complete','average','single']})
 
+        if 'k' in fixed.keys():
+            if 'n_clusters' in params: grid_params.update({'clf__n_clusters':[fixed['k']]})
+            if 'n_components' in params: grid_params.update({'clf__n_components':[fixed['k']]})
+            if 'n_neighbors' in params: grid_params.update({'clf__n_neighbors':[fixed['k']]})
+        
         # temporary, use this to improve the gridsearch process
-        print(params)
+        print('Available hyper-parameters', params)
         grid_params = [grid_params]
         print(grid_params, '\n')
 
@@ -686,8 +769,9 @@ class rubia_models:
                 cv = kfolds.split(self.X_train, self.y_train)
                 gs = GridSearchCV(estimator=pipe, param_grid=grid_params, scoring=score, cv=cv)
                 gs.fit(self.X_train, self.y_train)
+            self.best_model = gs.best_estimator_
 
-        if self.strategy == 'classification': # and len(grid_params) > 0:
+        elif self.strategy == 'classification': # and len(grid_params) > 0:
             scores = ['accuracy']
             # scores = ['accuracy', 'recall_macro', 'precision_macro']
             for score in scores:
@@ -695,8 +779,43 @@ class rubia_models:
                 cv = kfolds.split(self.X_train, self.y_train)
                 gs = GridSearchCV(estimator=pipe, param_grid=grid_params, scoring=score, cv=cv)
                 gs.fit(self.X_train, self.y_train)
+            self.best_model = gs.best_estimator_
 
-        self.best_model = gs.best_estimator_
+        elif self.strategy == 'clustering': # and len(grid_params) > 0:
+            best = model
+            best_result = 0
+            k = 2
+            scores = ['euclidean']
+            for score in scores:
+                # lets create our own GridSearch for clustering problems
+                my_dict = grid_params[0]
+                allParams = sorted(my_dict)
+                combinations = product(*(my_dict[param] for param in allParams))
+                for comb in combinations:
+                    new_params = {}
+                    for i, param in enumerate(allParams):
+                        if param == 'n_clusters' or param == 'n_components':
+                            k = comb[i]
+                        new_params.update({param: comb[i]})
+
+                    # update all tuning parameters and run 
+                    pipe.set_params(**new_params)
+                    bandwidth = estimate_bandwidth(self.X_train, quantile=0.3)
+                    connectivity = kneighbors_graph(self.X_train, n_neighbors=k, include_self=False)
+                    connectivity = 0.5 * (connectivity + connectivity.T)
+                    pipe.fit(self.X_train)
+                    if hasattr(pipe, 'labels_'):
+                        y_pred = pipe.labels_.astype(np.int)
+                    else:
+                        y_pred = pipe.predict(self.X_train)
+                    result = silhouette_score(self.X_train, y_pred, metric=score)
+                    if result > best_result:
+                        best_result = result
+                        best = pipe
+
+            self.best_model = best
+            self.best_model.best_params_ = new_params
+
         if printt:
             print(self.report_width * '*', '\n*')
             print('* HYPER-PARAMETER TUNING REPORT\n*')
@@ -705,7 +824,9 @@ class rubia_models:
                 print('* BEST SCORE: %.3f' % (-gs.best_score_))
             if self.strategy == 'classification':
                 print('* BEST SCORE: %.1f %%' % (100 * gs.best_score_))
-            print('* BEST PARAMS:', gs.best_params_)
+            if self.strategy == 'clustering':
+                print('* BEST SCORE (silhouette): %.2f' % (best_result))
+            print('* BEST PARAMS:', self.best_model.best_params_)
             print('*\n', self.report_width * '*')
             print(self.best_model)
 
@@ -713,11 +834,11 @@ class rubia_models:
 
 
     # given a model name, evaluate y_hat/y_pred/clusters and the overall performance of such model
-    def optimize(self, model_name, printt=True, graph=False):
+    def optimize(self, model_name, printt=True, graph=False, xy=(0,1), fixed={}):
         self.graphs_model = []
         size = self.graph_width
         model = self.models[model_name]
-        self.boost(model, printt) # grid search hyper parameters for this model
+        self.boost(model, printt, fixed=fixed) # grid search hyper parameters for this model
         
         if self.strategy == 'regression':
             X, y = self.X_test, self.y_test # evaluate using the test subset
@@ -769,8 +890,31 @@ class rubia_models:
                 plt.show()
             return 'Accuracy: ' + str(round(accuracy_score(y, y_pred)*100, 1)) + '%'
         
-        else:
-            return 'MISSING CLUSTERING BOOST'
+        elif self.strategy == 'clustering':
+            X = np.array(self.X_train) # use the same dataset to show the final model
+            self.best_model.fit(X)
+            if hasattr(self.best_model, 'labels_'):
+                y_pred = self.best_model.labels_.astype(np.int)
+            else:
+                y_pred = self.best_model.predict(X)
+            score = silhouette_score(X, y_pred, metric='euclidean')
+            sample_size = len(y_pred)
+            if printt:
+                print('\n')
+                print(self.report_width * '*', '\n*')
+                print('* MODEL PERFORMANCE \n*')
+                print('* MODEL NAME: ', model_name)
+                print('* TEST SAMPLE SIZE: ', sample_size)
+                print('* SILHOUETTE: ', round(score, 2))
+                print('* ')
+                print(self.report_width * '*', '\n')
+            if not graph:
+                fig, ax = plt.subplots(figsize=(size, 0.5 * size))
+                plt.title('Cluster Segmentation')
+                plt.scatter(X[:, xy[0]], X[:, xy[1]], c=y_pred, s=50, cmap='viridis')
+                self.graphs_model.append(fig)
+                plt.show()
+            return 'Silhouette: ' + str(round(score, 2))
 
 
 
@@ -805,6 +949,10 @@ def selectDemo(id):
         df = pd.read_excel('dataset/sample.xlsx')
         y_cols = ['yr']
         ignore_cols = ['g1', 'g2', 'y']    
+    elif id == 6:
+        df = pd.read_csv('dataset/iris.csv')
+        y_cols = []
+        ignore_cols = ['species']    
     else:
         df = pd.read_csv('dataset/iris.csv')
         y_cols = ['species']
@@ -812,10 +960,13 @@ def selectDemo(id):
     return df, y_cols, ignore_cols
 
 run_demo = True
-id = 2
+id = 6
 graph = False
 balance_tol = 0.3
 order = 1
+ncomponents = 3
+xy = (0, 1)
+fixed = {'k': 3}
 if run_demo:
     # load data as a pandas.dataframe object and pass it to the class
     df, y_cols, ignore_cols = selectDemo(id)
@@ -849,6 +1000,7 @@ if run_demo:
     rm.analyse(y_cols)
 
     # dimensionality reduction
+    if ncomponents > 1: rm.redux(k=ncomponents, mode='pca', transform='MinMax')
     if len(rm.X.columns) > 10: rm.redux(k=10)
 
     # evaluate the performance of a mix of models
@@ -856,7 +1008,7 @@ if run_demo:
     rm.evaluate(test_size=0.3, transformX='Standard', transformY='None', folds=10, alphas=alphas, graph=graph)
 
     # apply tuning to the best models
-    rm.optimize(str(rm.report_performance.Model.iloc[0]), graph=graph)
+    rm.optimize(str(rm.report_performance.Model.iloc[0]), graph=graph, xy=xy, fixed=fixed)
 
 
 
@@ -874,12 +1026,13 @@ if run_demo:
 
 # TO DO
 
-# implementar optimize e boost para regression e clustering
-# acrescentar métodos de agrupamento e test para eles
-
+# implantar clustering e pca no streamlit
 # corrigir os NaNs com a multinomial naive bayes
+# implementar redes neurais
 
 # implement multioutput (not planned)
 # adjust redux(k='auto') to calculate the optimal value for k (not planned)
 # add help menu with highlights for each model type, pros and cons (not planned)
 # weight CV and model constraints while choosing the best model type, for similar performances (not planned)
+# add metric parameter to the boost method, spefically for clustering (not planned)
+
