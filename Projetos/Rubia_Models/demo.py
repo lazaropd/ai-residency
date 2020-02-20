@@ -132,6 +132,8 @@ ph_s1 = st.sidebar.empty()
 ph_s2 = st.sidebar.empty()
 ph_s3 = st.sidebar.empty()
 ph_s31 = st.sidebar.empty()
+ph_s32 = st.sidebar.empty()
+ph_s315 = st.sidebar.empty()
 ph_s4 = st.sidebar.empty()
 ph_s5 = st.sidebar.empty()
 ph_s6 = st.sidebar.empty()
@@ -233,9 +235,22 @@ else:
         ytransform = 'None'
 
     countk = len(state.rm.X.columns)
-    kbest = ph_s31.slider('Limit K best features', 1, countk, 10 if countk > 10 else countk)
-    if kbest != len(state.rm.X.columns): state.rm.redux(k=kbest)
-    
+    pca = 0
+    kbest = 10 if countk > 10 else countk
+    redux_mode = ph_s31.selectbox('Dimensionality reduction mode', ['K Best Chi-square', 'PCA'])
+    if redux_mode == 'PCA':
+        pca = ph_s32.slider('Limit N principal components', 0, countk, 0)
+        if pca > 1:
+            if ph_s315.checkbox('Adjust feature scaling'):
+                state.rm.redux(k=pca, mode='pca', transform='MinMax')
+            else:
+                state.rm.redux(k=pca, mode='pca', transform='None')
+            st.warning('PCA explained variance: %.1f %%' % (100*state.rm.scalerX_pca.explained_variance_ratio_.sum()))
+    else:
+        kbest = ph_s32.slider('Limit K best features', 1, countk, kbest)
+        if kbest != countk: 
+            state.rm.redux(k=kbest)
+
     if ph_c3.checkbox('Show features'):  
         st.title('FEATURE EXTRACTION REPORT')
         st.write('X: ', ' | '.join(state.rm.X.columns))
@@ -245,8 +260,9 @@ else:
     graphm = ph_c6.checkbox('Modeling graphs')
 
     if ph_b1.button('EVALUATE'): # start the evaluation and performance tests
+        state.rm.explore(state.rm.data_raw, y_cols, ignore_cols, printt=False, graph=graphm) #updates X, y, M and remove constant columns
         alphas = 10 ** np.linspace(10, -2, 100) * 0.5
-        state.rm.evaluate(test_size=set_trainingsize, transformX=xtransform, transformY=ytransform, folds=10, alphas=alphas, printt=False, graph=graphm)
+        state.rm.evaluate(test_size=set_trainingsize, transformX=xtransform, transformY=ytransform, folds=10, alphas=alphas, printt=False, graph=graphm, metric='')
         st.title('RESULTS - BEFORE BOOSTING')
         st.write(state.rm.report_performance)
 
@@ -254,22 +270,26 @@ else:
         best = state.rm.report_performance.Model.iloc[0]
         st.success('**Best model:** ' + best)
         state.success = True
-        if graphm: # show graphs for model evaluation and overall performance
-            for fig in state.rm.graphs_model:
-                st.pyplot(fig)      
+        for fig in state.rm.graphs_model:
+            st.pyplot(fig)      
 
     if state.success: # show advanced boosting parameters
         st.title('BOOSTING')
         boost = st.selectbox('Choose a model to boost', state.rm.report_performance.Model)
+        cols_dict = {col: i for i, col in enumerate(state.rm.X.columns)}
+        x1 = st.selectbox('Select a variable to show on x-axis', state.rm.X.columns, 0)
+        x2 = st.selectbox('Select a variable to show on y-axis', state.rm.X.columns, 1)
+        xy = (cols_dict[x1], cols_dict[x2])
+        nclusters = st.slider('Fix the number of clusters/neighbors in (0=no_constrains)', 0, 20, 0)
+        fixed = {'k': nclusters} if nclusters > 0 else {}
         st.success('**Boosting model:** ' + str(boost))
         if st.button('Choose & Boost'):
             st.title('HYPER-PARAMETER TUNING REPORT')
-            result = state.rm.optimize(str(boost), printt=False, graph=graphm)
+            result = state.rm.optimize(str(boost), printt=False, graph=graphm, xy=xy, fixed=fixed)
             st.write(state.rm.best_model)
             st.success(result)
-            if graphm: # show graphs for model evaluation and overall performance
-                for fig in state.rm.graphs_model:
-                    st.pyplot(fig)     
+            for fig in state.rm.graphs_model:
+                st.pyplot(fig)     
 
     if not state.success:
         st.title('AUTO MODELING - ' + state.rm.strategy.upper())

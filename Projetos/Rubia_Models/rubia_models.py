@@ -392,7 +392,9 @@ class rubia_models:
         models["Agglomerative Ward K5"] = acg(n_clusters=5, linkage='ward', connectivity=connectivity)
         models["Agglomerative Avg K5"]  = acg(linkage="average", affinity="cityblock", n_clusters=5, connectivity=connectivity)
         models["Spectral K5"]           = scg(n_clusters=5, eigen_solver='arpack', affinity="nearest_neighbors")
-        models["DBScan"]                = dbg(eps=0.5, min_samples=10)
+        models["DBScan Euclidean"]      = dbg(eps=0.5, min_samples=10, metric='euclidean')
+        models["DBScan Manhattan"]      = dbg(eps=0.5, min_samples=10, metric='manhattan')
+        models["DBScan Cityblock"]      = dbg(eps=0.5, min_samples=10, metric='cityblock')
         models["Optics"]                = optg(min_samples=10, xi=0.05, min_cluster_size=0.1)
         models["Affinity Propagation"]  = apg(damping=0.9, preference=-200)
         models["Birch K5"]              = big(n_clusters=5)
@@ -456,7 +458,7 @@ class rubia_models:
         if graph:
             fig, ax = plt.subplots(figsize=(size, 0.5 * size))
             ax.set_xticks(np.arange(len(report)))
-            plt.title('Clustering Time Comparison (seconds)')
+            plt.title('Silhouette Comparison')
             plt.plot(report['Score (silhouette)'])
             ax.set_xticklabels(report.Model)
             plt.xticks(rotation=45)
@@ -551,16 +553,19 @@ class rubia_models:
         models["K nearest neighbors classifier K5"]     = knnc(n_neighbors=5)
         models["K nearest neighbors classifier K10"]    = knnc(n_neighbors=10)        
         models["Decision tree classifier"]              = dtc()
-        models["SVM classifier RBF"]                    = svc(gamma='scale')
-        models["SVM classifier Linear"]                 = svc(kernel='linear')
-        models["SVM classifier Poly"]                   = svc(kernel='poly')
         models["Gaussian naive bayes"]                  = gnbc()
         models["Bernoulli naive bayes"]                 = bnbc(binarize=0.5)
         models["Multinomial naive bayes"]               = mnbc()
         models["SGD classifier"]                        = sgdc(max_iter=10000)
         models["Ridge classifier"]                      = rc()
-        models["Random forest classifier"]              = rfc(n_estimators=100)
-        models["Gradient boosting classifier"]          = gbc()
+
+        if len(self.Xt_train) < 10000:
+            models["SVM classifier RBF"]                    = svc(gamma='scale')
+            models["SVM classifier Linear"]                 = svc(kernel='linear')
+            models["SVM classifier Poly"]                   = svc(kernel='poly')
+        if self.Xt_train.shape[0] < 10000 or self.Xt_train.shape[1] < 5:
+            models["Gradient boosting classifier"]          = gbc()
+            models["Random forest classifier"]              = rfc(n_estimators=100)
 
         if struct == 'multiclass':
             models["Logistic classifier multinomial"]= logitc(multi_class='multinomial', solver='lbfgs')
@@ -583,6 +588,7 @@ class rubia_models:
             results.append(cv_scores)
             names.append(model_name)
             et.append((time.time() - start))
+            #print(model_name, time.time() - start)
         report = pd.DataFrame({'Model': names, 'Score': results, 'Elapsed Time': et})
         report['Score (avg)'] = report.Score.apply(lambda x: x.mean())
         report['Score (std)'] = report.Score.apply(lambda x: x.std())
@@ -672,6 +678,10 @@ class rubia_models:
 
 
     # evaluate some models
+    # metric can be any from one of those:
+    # - grid search score metrics for sklearn classifiers
+    # - grid search score metrics for sklearn regressors
+    # - silhouette score metrics for sklearn clustering
     def evaluate(self, test_size=0.2, transformX='None', transformY='None', folds=10, alphas=[], printt=True, graph=False, metric=''):
         self.graphs_model = []
         if self.strategy == 'regression':
@@ -731,7 +741,8 @@ class rubia_models:
         if 'kernel' in params: grid_params.update({'clf__kernel':['linear','rbf','sigmoid']})
         if self.strategy == 'classification':
             if 'alpha' in params: grid_params.update({'clf__alphas':alphas})
-            if 'loss' in params: grid_params.update({'clf__loss':['hinge','log','modified_huber','squared_hinge','perceptron']})
+            if not isinstance(model, sklearn.ensemble.GradientBoostingClassifier):
+                if 'loss' in params: grid_params.update({'clf__loss':['hinge','log','modified_huber','squared_hinge','perceptron']})
             if 'criterion' in params: grid_params.update({'clf__criterion':['gini','entropy']})
         if self.strategy == 'regression':
             if 'loss' in params: grid_params.update({'clf__loss':['ls','lad','huber']})
@@ -740,7 +751,7 @@ class rubia_models:
         if 'n_estimators' in params: grid_params.update({'clf__n_estimators':pot10})
         if 'n_clusters' in params: grid_params.update({'clf__n_clusters':groups})
         if 'n_components' in params: grid_params.update({'clf__n_components':groups})
-        if not isinstance(model, sklearn.cluster.DBSCAN):
+        if not isinstance(model, sklearn.cluster.DBSCAN) and self.strategy == 'clustering':
             if 'algorithm' in params: grid_params.update({'clf__algorithm':['full','elkan']})
         if 'eps' in params: grid_params.update({'clf__eps':quarts})
         if 'min_samples' in params: grid_params.update({'clf__min_samples':samples})
@@ -822,11 +833,13 @@ class rubia_models:
             print("* SCORING METHOD: %s" % score)
             if self.strategy == 'regression':
                 print('* BEST SCORE: %.3f' % (-gs.best_score_))
+                print('* BEST PARAMS:', gs.best_params_)
             if self.strategy == 'classification':
                 print('* BEST SCORE: %.1f %%' % (100 * gs.best_score_))
+                print('* BEST PARAMS:', gs.best_params_)
             if self.strategy == 'clustering':
                 print('* BEST SCORE (silhouette): %.2f' % (best_result))
-            print('* BEST PARAMS:', self.best_model.best_params_)
+                print('* BEST PARAMS:', self.best_model.best_params_)
             print('*\n', self.report_width * '*')
             print(self.best_model)
 
@@ -908,7 +921,7 @@ class rubia_models:
                 print('* SILHOUETTE: ', round(score, 2))
                 print('* ')
                 print(self.report_width * '*', '\n')
-            if not graph:
+            if graph:
                 fig, ax = plt.subplots(figsize=(size, 0.5 * size))
                 plt.title('Cluster Segmentation')
                 plt.scatter(X[:, xy[0]], X[:, xy[1]], c=y_pred, s=50, cmap='viridis')
@@ -953,14 +966,18 @@ def selectDemo(id):
         df = pd.read_csv('dataset/iris.csv')
         y_cols = []
         ignore_cols = ['species']    
+    elif id == 7:
+        df = pd.read_csv('../../../bigdata/jet/full_data.csv')
+        y_cols = ['class']
+        ignore_cols = ['class']   
     else:
         df = pd.read_csv('dataset/iris.csv')
         y_cols = ['species']
         ignore_cols = []
     return df, y_cols, ignore_cols
 
-run_demo = True
-id = 6
+run_demo = False
+id = -1
 graph = False
 balance_tol = 0.3
 order = 1
@@ -1000,8 +1017,11 @@ if run_demo:
     rm.analyse(y_cols)
 
     # dimensionality reduction
-    if ncomponents > 1: rm.redux(k=ncomponents, mode='pca', transform='MinMax')
-    if len(rm.X.columns) > 10: rm.redux(k=10)
+    if ncomponents > 1: 
+        rm.redux(k=ncomponents, mode='pca', transform='MinMax')
+        print('Explained variance (%)', rm.scalerX_pca.explained_variance_ratio_.sum())
+    elif len(rm.X.columns) > 10: 
+        rm.redux(k=10)
 
     # evaluate the performance of a mix of models
     alphas = 10 ** np.linspace(10, -2, 100) * 0.5
@@ -1009,7 +1029,6 @@ if run_demo:
 
     # apply tuning to the best models
     rm.optimize(str(rm.report_performance.Model.iloc[0]), graph=graph, xy=xy, fixed=fixed)
-
 
 
 
@@ -1025,10 +1044,6 @@ if run_demo:
 
 
 # TO DO
-
-# implantar clustering e pca no streamlit
-# corrigir os NaNs com a multinomial naive bayes
-# implementar redes neurais
 
 # implement multioutput (not planned)
 # adjust redux(k='auto') to calculate the optimal value for k (not planned)
