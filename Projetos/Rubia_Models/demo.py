@@ -260,7 +260,6 @@ else:
     graphm = ph_c6.checkbox('Modeling graphs')
 
     if ph_b1.button('EVALUATE'): # start the evaluation and performance tests
-        state.rm.explore(state.rm.data_raw, y_cols, ignore_cols, printt=False, graph=graphm) #updates X, y, M and remove constant columns
         alphas = 10 ** np.linspace(10, -2, 100) * 0.5
         state.rm.evaluate(test_size=set_trainingsize, transformX=xtransform, transformY=ytransform, folds=10, alphas=alphas, printt=False, graph=graphm, metric='')
         st.title('RESULTS - BEFORE BOOSTING')
@@ -270,6 +269,8 @@ else:
         best = state.rm.report_performance.Model.iloc[0]
         st.success('**Best model:** ' + best)
         state.success = True
+        for fig in state.rm.graphs_expl:
+            st.pyplot(fig)  
         for fig in state.rm.graphs_model:
             st.pyplot(fig)      
 

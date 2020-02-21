@@ -146,52 +146,55 @@ class rubia_models:
                     self.graphs_expl.append(fig)
                     plt.show()
             # histogram for every feature: pay attention to outliers, data distribution and dimension
-            COLS = 3
-            ROWS = len(self.X.columns) // COLS + (1 if len(self.X.columns) % COLS != 0 else 0)
-            fig, ax = plt.subplots(ROWS, COLS, figsize=(size, 4 * ROWS))
-            row, col = 0, 0
-            for i, feature in enumerate(self.X.columns):
-                if col == (COLS - 1):
-                    row += 1
-                    plt.subplots_adjust(hspace=0.2, top = 0.92)
-                else:
-                    plt.subplots_adjust(hspace=0.2, top = 0.80)
-                col = i % COLS    
-                cax = ax[row, col] if ROWS > 1 else ax[col]
+            if df.shape[1] <= 10: # for larger datasets, graphs are not recommended
+                dfg = df.copy()
+                if len(dfg) > 1000: dfg = dfg.sample(1000)
+                COLS = 3
+                ROWS = len(dfg.columns) // COLS + (1 if len(dfg.columns) % COLS != 0 else 0)
+                fig, ax = plt.subplots(ROWS, COLS, figsize=(size, 4 * ROWS))
+                row, col = 0, 0
+                for i, feature in enumerate(dfg.columns):
+                    if col == (COLS - 1):
+                        row += 1
+                        plt.subplots_adjust(hspace=0.2, top = 0.92)
+                    else:
+                        plt.subplots_adjust(hspace=0.2, top = 0.80)
+                    col = i % COLS    
+                    cax = ax[row, col] if ROWS > 1 else ax[col]
+                    if len(unique) <= 10 and len(y_cols) == 1: # discriminate only one-level and few classes cases
+                        for cat in dfg[y_cols[0]].unique():
+                            dfg[dfg[y_cols[0]]==cat][feature].hist(bins=30, alpha=0.5, edgecolor='white', ax=cax).set_title(feature)
+                    else:
+                        dfg[feature].hist(bins=30, alpha=0.5, edgecolor='white', ax=cax).set_title(feature)
+                fig.suptitle('Data Distribution', fontsize=14)
+                self.graphs_expl.append(fig)
+                plt.show()
+                # pairplot and density plot for every column
                 if len(unique) <= 10 and len(y_cols) == 1: # discriminate only one-level and few classes cases
-                    for cat in df[y_cols[0]].unique():
-                        df[df[y_cols[0]]==cat][feature].hist(bins=30, alpha=0.5, edgecolor='white', ax=cax).set_title(feature)
+                    g = sns.pairplot(dfg, hue=y_cols[0], plot_kws={'alpha':0.5, 's': 20})
+                    handles = g._legend_data.values()
+                    labels = g._legend_data.keys()
+                    g._legend.remove()
+                    g.fig.legend(handles=handles, labels=labels, loc='lower center', ncol=3)
                 else:
-                    df[feature].hist(bins=30, alpha=0.5, edgecolor='white', ax=cax).set_title(feature)
-            fig.suptitle('Data Distribution', fontsize=14)
-            self.graphs_expl.append(fig)
-            plt.show()
-            # pairplot and density plot for every column
-            if len(unique) <= 10 and len(y_cols) == 1: # discriminate only one-level and few classes cases
-                g = sns.pairplot(self.M, hue=y_cols[0], plot_kws={'alpha':0.5, 's': 20})
-                handles = g._legend_data.values()
-                labels = g._legend_data.keys()
-                g._legend.remove()
-                g.fig.legend(handles=handles, labels=labels, loc='lower center', ncol=3)
-            else:
-                g = sns.pairplot(self.M, plot_kws={'alpha':0.5, 's': 20})
-            g.fig.set_figwidth(0.75 * size)
-            g.fig.set_figheight(0.75 * size)
-            plt.subplots_adjust(top = 0.92, bottom=0.08)
-            g.fig.suptitle('Pairplot and Density Matrix', fontsize=14)
-            self.graphs_expl.append(g.fig)
-            plt.show()
-            # correlation heatmap matrix
-            fig, ax = plt.subplots(figsize=(0.95 * size, 0.95 * size))
-            corr = self.M.corr()
-            mask = np.zeros_like(corr)
-            mask[np.triu_indices_from(mask)] = True
-            sns.heatmap(self.M.corr(), ax=ax, mask=mask, annot = True, vmin = -1, vmax = 1, center = 0, cmap = 'RdBu_r')
-            plt.xticks(rotation=45)
-            plt.yticks(rotation=45)
-            plt.title('Correlation Matrix')
-            self.graphs_expl.append(fig)
-            plt.show()
+                    g = sns.pairplot(dfg, plot_kws={'alpha':0.5, 's': 20})
+                g.fig.set_figwidth(0.75 * size)
+                g.fig.set_figheight(0.75 * size)
+                plt.subplots_adjust(top = 0.92, bottom=0.08)
+                g.fig.suptitle('Pairplot and Density Matrix', fontsize=14)
+                self.graphs_expl.append(g.fig)
+                plt.show()
+                # correlation heatmap matrix
+                fig, ax = plt.subplots(figsize=(0.95 * size, 0.95 * size))
+                corr = dfg.corr()
+                mask = np.zeros_like(corr)
+                mask[np.triu_indices_from(mask)] = True
+                sns.heatmap(dfg.corr(), ax=ax, mask=mask, annot = True, vmin = -1, vmax = 1, center = 0, cmap = 'RdBu_r')
+                plt.xticks(rotation=45)
+                plt.yticks(rotation=45)
+                plt.title('Correlation Matrix')
+                self.graphs_expl.append(fig)
+                plt.show()
 
         return None
 
@@ -296,12 +299,12 @@ class rubia_models:
     def redux(self, k=10, mode='chi-square', transform='None'):
         if k == 'auto':
             k = 10 # require deeper implementation
-        if mode == 'chi-square':
+        if mode == 'chi-square' and self.X.shape[1] >= k and self.y.shape[1] > 0:
             selector = SelectKBest(chi2, k=k)
             best_features = selector.fit_transform(self.X, self.y)
             mask = selector.get_support(indices=True)
             self.X = self.X.iloc[:,mask]
-        elif mode == 'pca':
+        elif mode == 'pca' and self.X.shape[1] >= k:
             if transform != 'None':
                 scaler = MinMaxScaler() # only minmax supported right now
                 self.scalerX_prepca = scaler.fit(self.X)
@@ -743,7 +746,7 @@ class rubia_models:
             if 'alpha' in params: grid_params.update({'clf__alphas':alphas})
             if not isinstance(model, sklearn.ensemble.GradientBoostingClassifier):
                 if 'loss' in params: grid_params.update({'clf__loss':['hinge','log','modified_huber','squared_hinge','perceptron']})
-            if 'criterion' in params: grid_params.update({'clf__criterion':['gini','entropy']})
+                if 'criterion' in params: grid_params.update({'clf__criterion':['gini','entropy']})
         if self.strategy == 'regression':
             if 'loss' in params: grid_params.update({'clf__loss':['ls','lad','huber']})
         if 'max_depth' in params: grid_params.update({'clf__max_depth':groups[:-1]})
@@ -981,7 +984,7 @@ id = -1
 graph = False
 balance_tol = 0.3
 order = 1
-ncomponents = 3
+ncomponents = 2
 xy = (0, 1)
 fixed = {'k': 3}
 if run_demo:
