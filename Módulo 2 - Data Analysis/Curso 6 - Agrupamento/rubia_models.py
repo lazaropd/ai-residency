@@ -130,7 +130,7 @@ class rubia_models:
             print('* M: ', self.X.shape, '|', self.y.shape)
             print('* ')
             print(self.report_width * '*' + '\n')
-        print(graph)
+
         if graph:  
             self.graphs_expl = [] 
             size = self.graph_width
@@ -146,7 +146,7 @@ class rubia_models:
                     self.graphs_expl.append(fig)
                     plt.show()
             # histogram for every feature: pay attention to outliers, data distribution and dimension
-            if df.shape[1] <= 10: # for larger datasets, graphs are not recommended
+            if df.shape[1] <= 20: # for larger datasets, graphs are not recommended
                 dfg = df.copy()
                 if len(dfg) > 1000: dfg = dfg.sample(1000)
                 COLS = 3
@@ -236,7 +236,7 @@ class rubia_models:
 
     
     # encode all non numeric features
-    def encode(self, encoder='LabelEncoder'):
+    def encode(self, encoder='LabelEncoder', who='both'):
         if encoder == 'LabelEncoder':
             le = LabelEncoder()   
             for col in self.X.columns:
@@ -250,9 +250,10 @@ class rubia_models:
             for col in self.X.columns:
                 if str(self.X[col].dtype) == 'object' or str(self.X[col].dtype) == 'string':
                     self.X = pd.concat([self.X, pd.get_dummies(self.X[col], prefix=col, dummy_na=True)], axis=1).drop([col], axis=1)
-            for col in self.y.columns:
-                if str(self.y[col].dtype) == 'object' or str(self.y[col].dtype) == 'string':
-                    self.y = pd.concat([self.y, pd.get_dummies(self.y[col], prefix=col, dummy_na=True)], axis=1).drop([col], axis=1)
+            if who == 'both':
+                for col in self.y.columns:
+                    if str(self.y[col].dtype) == 'object' or str(self.y[col].dtype) == 'string':
+                        self.y = pd.concat([self.y, pd.get_dummies(self.y[col], prefix=col, dummy_na=True)], axis=1).drop([col], axis=1)
         self.M = pd.concat([self.X, self.y], axis=1)
         return None
 
@@ -272,6 +273,7 @@ class rubia_models:
                 size_after = len(newdf)
                 if (abs(size_after-size_before)/size_before) < tol:
                     X_cols = [col for col in newdf.columns if col not in y_cols and col not in ig_cols]
+                    newdf.reset_index(inplace=True, drop=True)
                     self.X = newdf.loc[:, X_cols]
                     self.y = newdf.loc[:, y_cols]
                     self.M = pd.concat([self.X, self.y], axis=1)
@@ -563,21 +565,22 @@ class rubia_models:
         models["Ridge classifier"]                      = rc()
 
         if len(self.Xt_train) < 10000:
-            models["SVM classifier RBF"]                    = svc(gamma='scale')
-            models["SVM classifier Linear"]                 = svc(kernel='linear')
-            models["SVM classifier Poly"]                   = svc(kernel='poly')
+            models["SVM classifier RBF"]                = svc(gamma='scale')
+            models["SVM classifier Linear"]             = svc(kernel='linear')
+            models["SVM classifier Poly"]               = svc(kernel='poly')
+
         if self.Xt_train.shape[0] < 10000 or self.Xt_train.shape[1] < 5:
-            models["Gradient boosting classifier"]          = gbc()
-            models["Random forest classifier"]              = rfc(n_estimators=100)
+            models["Gradient boosting classifier"]      = gbc()
+            models["Random forest classifier"]          = rfc(n_estimators=100)
 
         if struct == 'multiclass':
-            models["Logistic classifier multinomial"]= logitc(multi_class='multinomial', solver='lbfgs')
-            models["Logistic classifier auto"]       = logitc(multi_class='auto')
-            models["Logistic One vs Rest"]           = ovrc(logitc())
-            models["Logistic One vs One"]            = ovoc(logitc())
+            models["Logistic classifier multinomial"]   = logitc(multi_class='multinomial', solver='lbfgs')
+            models["Logistic classifier auto"]          = logitc(multi_class='auto')
+            models["Logistic One vs Rest"]              = ovrc(logitc())
+            models["Logistic One vs One"]               = ovoc(logitc())
 
         if struct == 'binary':
-            models["Logistic classifier"]            = logitc(max_iter=2000)
+            models["Logistic classifier"]               = logitc(max_iter=2000)
 
         self.models = models
 
@@ -734,6 +737,8 @@ class rubia_models:
             if 'solver' in params: grid_params.update({'clf__solver':['svd','lsqr','eigen']})
         if 'n_neighbors' in params: grid_params.update({'clf__n_neighbors':groups})
         if 'weights' in params: grid_params.update({'clf__weights':['uniform','distance']})
+        if isinstance(model, sklearn.neighbors.KNeighborsClassifier):
+            if 'metric' in params: grid_params.update({'clf__metric':['euclidean','manhattan','cityblock','minkowski']})
         if 'p' in params: grid_params.update({'clf__p':[1, 2]})
         if 'C' in params: grid_params.update({'clf__C':pot10})
         if 'penalty' in params: grid_params.update({'clf__penalty':['l1','l2','elasticnet','none']})
@@ -781,7 +786,7 @@ class rubia_models:
             for score in scores:
                 kfolds = KFold(n_splits=2, shuffle=True)
                 cv = kfolds.split(self.X_train, self.y_train)
-                gs = GridSearchCV(estimator=pipe, param_grid=grid_params, scoring=score, cv=cv)
+                gs = GridSearchCV(estimator=pipe, param_grid=grid_params, scoring=score, cv=cv, error_score=0.0)
                 gs.fit(self.X_train, self.y_train)
             self.best_model = gs.best_estimator_
 
@@ -791,7 +796,7 @@ class rubia_models:
             for score in scores:
                 kfolds = StratifiedKFold(n_splits=2, shuffle=True)
                 cv = kfolds.split(self.X_train, self.y_train)
-                gs = GridSearchCV(estimator=pipe, param_grid=grid_params, scoring=score, cv=cv)
+                gs = GridSearchCV(estimator=pipe, param_grid=grid_params, scoring=score, cv=cv, error_score=0.0)
                 gs.fit(self.X_train, self.y_train)
             self.best_model = gs.best_estimator_
 
