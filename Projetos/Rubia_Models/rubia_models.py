@@ -7,6 +7,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 plt.style.use(['seaborn', 'ggplot', 'seaborn-white'])
+from IPython.core.display import display
 
 import scipy
 from scipy import stats
@@ -49,7 +50,6 @@ from sklearn.cluster import AgglomerativeClustering as acg, SpectralClustering a
 from sklearn.cluster import DBSCAN as dbg, OPTICS as optg, Birch as big
 from sklearn.mixture import GaussianMixture as gmg
 
-
 # multiclass
 from sklearn.multiclass import OneVsRestClassifier as ovrc, OneVsOneClassifier as ovoc
 
@@ -61,6 +61,11 @@ from sklearn.feature_selection import SelectKBest, chi2
 from sklearn.pipeline import Pipeline
 from sklearn.model_selection import GridSearchCV
 
+# keras & tensorflow
+from sklearn.metrics import f1_score
+import tensorflow
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout 
 
 
 class rubia_models:
@@ -100,9 +105,9 @@ class rubia_models:
             print('* ')
             print(self.report_width * '*')
             print('\nDATA SAMPLE: ')
-            print(df.sample(5))
+            display(df.sample(5))
             print('\nSTATISTICS: ')
-            print(df.describe(include='all').T)
+            display(df.describe(include='all').T)
             print('\n\n')
         return None
         
@@ -125,8 +130,8 @@ class rubia_models:
         if printt:
             print(self.report_width * '*', '\n*')
             print('* FEATURE EXTRACTION REPORT \n*')
-            print('* X: ', ' | '.join(X_cols))
-            print('* y: ', ' | '.join(y_cols))
+            print('* X: ', ' | '.join(self.X.columns))
+            print('* y: ', ' | '.join(self.y.columns))
             print('* M: ', self.X.shape, '|', self.y.shape)
             print('* ')
             print(self.report_width * '*' + '\n')
@@ -146,7 +151,7 @@ class rubia_models:
                     self.graphs_expl.append(fig)
                     plt.show()
             # histogram for every feature: pay attention to outliers, data distribution and dimension
-            if df.shape[1] <= 10: # for larger datasets, graphs are not recommended
+            if df.shape[1] <= 20: # for larger datasets, graphs are not recommended
                 dfg = df.copy()
                 if len(dfg) > 1000: dfg = dfg.sample(1000)
                 COLS = 3
@@ -236,23 +241,27 @@ class rubia_models:
 
     
     # encode all non numeric features
-    def encode(self, encoder='LabelEncoder'):
+    def encode(self, encoder='LabelEncoder', who='both'):
         if encoder == 'LabelEncoder':
             le = LabelEncoder()   
-            for col in self.X.columns:
-                if str(self.X[col].dtype) == 'object' or str(self.X[col].dtype) == 'string':
-                    self.X[col] = le.fit_transform(self.X[col])
-            for col in self.y.columns:
-                if str(self.y[col].dtype) == 'object' or str(self.y[col].dtype) == 'string':
-                    self.y[col] = le.fit_transform(self.y[col])
+            if who == 'both' or who == 'X':
+                for col in self.X.columns:
+                    if str(self.X[col].dtype) == 'object' or str(self.X[col].dtype) == 'string':
+                        self.X[col] = le.fit_transform(self.X[col])
+            if who == 'both' or who == 'Y':
+                for col in self.y.columns:
+                    if str(self.y[col].dtype) == 'object' or str(self.y[col].dtype) == 'string':
+                        self.y[col] = le.fit_transform(self.y[col])
         else:
             #le = OneHotEncoder() 
-            for col in self.X.columns:
-                if str(self.X[col].dtype) == 'object' or str(self.X[col].dtype) == 'string':
-                    self.X = pd.concat([self.X, pd.get_dummies(self.X[col], prefix=col, dummy_na=True)], axis=1).drop([col], axis=1)
-            for col in self.y.columns:
-                if str(self.y[col].dtype) == 'object' or str(self.y[col].dtype) == 'string':
-                    self.y = pd.concat([self.y, pd.get_dummies(self.y[col], prefix=col, dummy_na=True)], axis=1).drop([col], axis=1)
+            if who == 'both' or who == 'X':
+                for col in self.X.columns:
+                    if str(self.X[col].dtype) == 'object' or str(self.X[col].dtype) == 'string':
+                        self.X = pd.concat([self.X, pd.get_dummies(self.X[col], prefix=col, dummy_na=True)], axis=1).drop([col], axis=1)
+            if who == 'both' or who == 'Y':
+                for col in self.y.columns:
+                    if str(self.y[col].dtype) == 'object' or str(self.y[col].dtype) == 'string':
+                        self.y = pd.concat([self.y, pd.get_dummies(self.y[col], prefix=col, dummy_na=True)], axis=1).drop([col], axis=1)
         self.M = pd.concat([self.X, self.y], axis=1)
         return None
 
@@ -272,6 +281,7 @@ class rubia_models:
                 size_after = len(newdf)
                 if (abs(size_after-size_before)/size_before) < tol:
                     X_cols = [col for col in newdf.columns if col not in y_cols and col not in ig_cols]
+                    newdf.reset_index(inplace=True, drop=True)
                     self.X = newdf.loc[:, X_cols]
                     self.y = newdf.loc[:, y_cols]
                     self.M = pd.concat([self.X, self.y], axis=1)
@@ -280,8 +290,16 @@ class rubia_models:
 
     # analyse if this is a regression or classification problem
     # more than 10 classes transforms the process automatically to regression
-    def analyse(self, y_cols):
-        if len(y_cols) < 1:
+    def analyse(self, y_cols, priority='Classical'):
+        if priority != 'Classical' or self.y.shape[1] > 1:
+            strategy = []
+            for y_col in y_cols:
+                if len(self.y[y_col].unique()) > 10 or str(self.y[y_col].dtype) == 'float64':
+                    strategy.append('regression_nn')
+                else:
+                    strategy.append('classification_nn')
+            self.strategy = 'regression_nn' if 'regression_nn' in strategy else 'classification_nn'
+        elif len(y_cols) < 1:
             self.strategy = 'clustering'
         else:
             strategy = []
@@ -291,7 +309,7 @@ class rubia_models:
                 else:
                     strategy.append('classification')
             self.strategy = 'regression' if 'regression' in strategy else 'classification'
-        # print('Problem identified as', self.strategy)
+        print('Problem identified as', self.strategy)
         return None
 
 
@@ -377,7 +395,7 @@ class rubia_models:
     
 
     # apply clustering models
-    def clustering(self, metric, printt=True, graph=False):
+    def clustering(self, metric, xy=(0,0), printt=True, graph=False):
         size = self.graph_width
         X = np.array(self.Xt_train)
 
@@ -437,7 +455,7 @@ class rubia_models:
                                         int(max(y_pred) + 1))))
             # add gray color for outliers (if any)
             colors = np.append(colors, ["#bbbbbb"])
-            plt.scatter(X[:, 0], X[:, 1], s=10, color=colors[y_pred])
+            plt.scatter(X[:, xy[0]], X[:, xy[1]], s=10, color=colors[y_pred])
             plt.xticks(())
             plt.yticks(())
             plt.text(.99, .01, ('%.2fs' % elapsed).lstrip('0'), transform=plt.gca().transAxes, size=14, horizontalalignment='right')
@@ -455,7 +473,7 @@ class rubia_models:
             print(self.report_width * '*', '\n*')
             print('* CLUSTERING RESULTS - BEFORE PARAMETERS BOOSTING \n*')
             print(self.report_width * '*', '')
-            print(report)
+            display(report)
             print('\n')
 
         if graph:
@@ -522,7 +540,7 @@ class rubia_models:
             print(self.report_width * '*', '\n*')
             print('* REGRESSION RESULTS - BEFORE PARAMETERS BOOSTING \n*')
             print(self.report_width * '*', '')
-            print(report)
+            display(report)
             print('\n')
 
         if graph:
@@ -563,21 +581,22 @@ class rubia_models:
         models["Ridge classifier"]                      = rc()
 
         if len(self.Xt_train) < 10000:
-            models["SVM classifier RBF"]                    = svc(gamma='scale')
-            models["SVM classifier Linear"]                 = svc(kernel='linear')
-            models["SVM classifier Poly"]                   = svc(kernel='poly')
+            models["SVM classifier RBF"]                = svc(gamma='scale')
+            models["SVM classifier Linear"]             = svc(kernel='linear')
+            models["SVM classifier Poly"]               = svc(kernel='poly')
+
         if self.Xt_train.shape[0] < 10000 or self.Xt_train.shape[1] < 5:
-            models["Gradient boosting classifier"]          = gbc()
-            models["Random forest classifier"]              = rfc(n_estimators=100)
+            models["Gradient boosting classifier"]      = gbc()
+            models["Random forest classifier"]          = rfc(n_estimators=100)
 
         if struct == 'multiclass':
-            models["Logistic classifier multinomial"]= logitc(multi_class='multinomial', solver='lbfgs')
-            models["Logistic classifier auto"]       = logitc(multi_class='auto')
-            models["Logistic One vs Rest"]           = ovrc(logitc())
-            models["Logistic One vs One"]            = ovoc(logitc())
+            models["Logistic classifier multinomial"]   = logitc(multi_class='multinomial', solver='lbfgs')
+            models["Logistic classifier auto"]          = logitc(multi_class='auto')
+            models["Logistic One vs Rest"]              = ovrc(logitc())
+            models["Logistic One vs One"]               = ovoc(logitc())
 
         if struct == 'binary':
-            models["Logistic classifier"]            = logitc(max_iter=2000)
+            models["Logistic classifier"]               = logitc(max_iter=2000)
 
         self.models = models
 
@@ -606,7 +625,7 @@ class rubia_models:
             print(self.report_width * '*', '\n*')
             print('* CLASSIFICATION RESULTS - BEFORE PARAMETERS BOOSTING \n*')
             print(self.report_width * '*', '')
-            print(report)
+            display(report)
             print('\n')
 
         if graph:
@@ -621,7 +640,7 @@ class rubia_models:
             plt.show()             
         return None
 
-    
+ 
     # residual analysis for regression problems
     def calc_rss(self, residual):
         return float(((residual) ** 2).sum())         
@@ -680,12 +699,331 @@ class rubia_models:
         return 'RMSE: %.2f | R2: %.2f' % (self.calc_rmse(y, y_hat), self.calc_r2(y, y_hat))
 
 
+    # add a layer of type Dense to an existing NN model
+    def addDense(self, neurons, activation='default', input_dim=0):
+        if activation == 'default':
+            if input_dim > 0:
+                self.model.add(Dense(units=neurons, input_dim=input_dim))
+            else:
+                self.model.add(Dense(units=neurons))
+        else:
+            if input_dim > 0:
+                self.model.add(Dense(units=neurons, activation=activation, input_dim=input_dim))
+            else:
+                self.model.add(Dense(units=neurons, activation=activation))
+        return None
+    
+    
+    # add a dropout layer to an existing NN model
+    def addDropout(self, perc=0.2):
+        self.model.add(Dropout(perc))
+        return None
+
+
+    # create a Sequential topology using the pre defined scheme 
+    def topology(self, metric, scheme, loss, optimizer):
+        self.model = Sequential() 
+        n_output = self.yt_train.shape[1]
+        # multioutput regression not available so far
+        if n_output == 1 and self.strategy == 'classification_nn': 
+            if len(self.y.ix[:,0].unique()) > 2: 
+                n_output = len(self.y.ix[:,0].unique())   
+            else:
+                n_output = 1 # only one neuron for binary single classification   
+        
+        # add each layer to the model
+        for i, (name, layer) in enumerate(scheme.items()):
+            input_dim = 0
+            if len(self.model.layers) == 0:
+                input_dim = self.Xt_train.shape[1] # set input dim for the first layer
+            if i + 1 == len(scheme): # set the number of neurons in the last layer equal len(target)
+                self.addDense(n_output, layer['activation'], input_dim) 
+            else:
+                if layer['type'] == 'Dense':
+                    self.addDense(layer['neurons'], layer['activation'], input_dim)  
+                if len(self.model.layers) != 0 and layer['type'] == 'Dropout':
+                    self.addDropout(layer['perc'])  
+                    
+        # updates the last layer shape to the output shape
+        scheme[name].update({'type': layer['type'], 
+                                      'neurons': n_output,
+                                      'activation': layer['activation']})
+        # prepare the computational graph for this topology
+        self.model.compile(loss=loss, optimizer=optimizer, metrics=[metric])
+
+        #self.model.summary()
+        self.current_scheme = scheme
+        return None
+
+    
+    # fit and test the performance of the ANN
+    def trainANN(self, epochs, verbose):
+        x_train = np.asarray(self.Xt_train)
+        x_test = np.asarray(self.Xt_test)
+        y_train = np.asarray(self.yt_train)
+        y_test = np.asarray(self.yt_test)
+        #try: # some combinations are not allowed, so, return zero if necessary
+        hist = self.model.fit(x=x_train, y=y_train, epochs=epochs, verbose=verbose, validation_split=0.2, shuffle=True)
+
+        # evaluate the performance of the classifier
+        if self.strategy == 'classification_nn' and self.yt_train.shape[1] == 1:
+            y_pred = self.model.predict_classes(x_test)
+        elif self.strategy == 'classification_nn' and self.yt_train.shape[1] > 1:
+            y_pred = self.model.predict(x_test)
+            y_test = np.argmax(y_test, axis=1)
+            y_pred = np.argmax(y_pred, axis=1)
+        elif self.strategy == 'regression_nn' and self.yt_train.shape[1] == 1:
+            y_pred = self.model.predict(x_test)
+        #display(pd.concat([pd.DataFrame(y_test), pd.DataFrame(y_pred)], axis=1).sample(5))
+        if self.strategy == 'classification_nn':
+            score = 100 * f1_score(y_test, y_pred, average='macro')
+            accuracy = accuracy_score(y_test, y_pred, normalize=True)
+        else:
+            score = self.calc_rmse(y_test, y_pred)
+            accuracy = self.calc_r2(y_test, y_pred)
+        
+        if (score > self.best_score and self.strategy == 'classification_nn') or \
+            (score < self.best_score and self.strategy == 'regression_nn'):
+            self.best_model = self.model
+            self.best_scheme = self.current_scheme
+            self.best_score = score
+            self.history = hist.history
+            self.y_pred = y_pred
+            self.y_true = y_test
+            #print('score', score)
+            #print('accuracy', accuracy)
+            #print('training evolution')
+            #print('elapsed time')
+        #except: 
+        #    score = 0
+        return score
+    
+    
+    # random search for better model performance
+    def searchANN(self, runs=1, max_depth=1, metric='mse', fixed={}, printt=True, graph=False):
+        size = self.graph_width
+        
+        # list of optimization options, if not in the fixed dict
+        if 'neurons' not in fixed.keys(): 
+            neurons_list = [1, 2, 4, 8, 16, 32, 64, 128, 256, 512]
+        else:
+            neurons_list = fixed['neurons']
+            
+        if 'loss' not in fixed.keys(): 
+            if self.strategy == 'regression_nn':
+                loss_list = ['mean_squared_error', 'mean_absolute_error',
+                            'hinge', 'logcosh']
+            else:
+                if self.y.shape[1] == 1 and len(self.y.ix[:,0].unique()) == 2:
+                    loss_list = ['mean_squared_error', 'mean_absolute_error',
+                                'binary_crossentropy', 'categorical_hinge', 'hinge',
+                                'logcosh']
+                elif self.y.shape[1] == 1 and len(self.y.ix[:,0].unique()) > 2:
+                    loss_list = ['sparse_categorical_crossentropy', 'categorical_hinge', 'hinge',
+                                'logcosh']
+                elif self.y.shape[1] > 1:
+                    loss_list = ['mean_squared_error', 'mean_absolute_error', 
+                                'binary_crossentropy', 'categorical_crossentropy',
+                                'categorical_hinge', 'hinge', 'logcosh']
+        else:
+            loss_list = fixed['loss']
+            
+        if 'optimizer' not in fixed.keys(): 
+            optimizer_list = ['sgd', 'adam', 'adagrad', 'rmsprop', 'adadelta']
+        else:
+            optimizer_list = fixed['optimizer']
+            
+        if 'epochs' not in fixed.keys(): 
+            epoch_list = [5, 100, 500, 1000]
+        else:
+            epoch_list = fixed['epochs']
+            
+        if 'type' not in fixed.keys(): 
+            type_list = ['Dense', 'Dropout']
+        else:
+            type_list = fixed['type']
+            
+        if 'activation' not in fixed.keys(): 
+            if self.strategy == 'regression_nn':
+                activation_list = ['elu', 'relu', 'linear']
+            else:
+                if self.y.shape[1] == 1 and len(self.y.ix[:,0].unique()) == 2:
+                    activation_list = ['sigmoid', 'softmax', 'elu', 'relu', 'linear', 'tanh']
+                elif self.y.shape[1] == 1 and len(self.y.ix[:,0].unique()) > 2:
+                    activation_list = ['sigmoid', 'softmax', 'elu', 'relu', 'linear', 'tanh']
+                elif self.y.shape[1] > 1:
+                    activation_list = ['sigmoid', 'softmax', 'elu', 'relu', 'linear', 'tanh']
+        else:
+            activation_list = fixed['activation']
+            
+        self.best_model = None
+        self.best_score = 0.0 if self.strategy == 'classification_nn' else +np.inf
+        
+        # generate the scheme, evaluate and store all relevant results
+        names = []
+        et = []
+        results = []
+        model_scheme = []
+        losses = []
+        optimizers = []
+        eps = []
+        for run in range(runs):
+            start = time.time()
+            n_layers = np.random.randint(1, max_depth+1) # random number of layers between 1 and max_depth
+            n_in = len(self.y.columns)
+            # add a very simple topology to the models initial scheme
+            scheme = {}
+            for i in range(1, n_layers+1):
+                # remove invalid layer types in the first layer
+                allowed = [typeof for typeof in type_list if (i != 1 or (typeof != 'Dropout' and i == 1))]
+                # remove invalid layer types in the last layer
+                allowed = [typeof for typeof in allowed if (i != n_layers or (typeof != 'Dropout' and i == n_layers))]
+                layer_type = np.random.choice(allowed)
+                if layer_type == 'Dense':
+                    scheme.update({'Layer %d'%i: {'type': layer_type, 
+                                                  'neurons': np.random.choice(neurons_list),
+                                                  'activation': np.random.choice(activation_list)}})
+                elif layer_type == 'Dropout':
+                    scheme.update({'Layer %d'%i: {'type': layer_type, 
+                                                  'perc': np.random.uniform(0.05, 0.5)}})
+            
+            # prepare the topology for this network
+            loss = np.random.choice(loss_list)
+            losses.append(loss)
+            optimizer = np.random.choice(optimizer_list)
+            optimizers.append(optimizer)
+            self.topology(metric, scheme, loss, optimizer)
+            
+            # train and evaluate this topology, compare with previous best and update models if necessary
+            epochs = np.random.choice(epoch_list)
+            eps.append(epochs)
+            score = self.trainANN(epochs, 0)
+            results.append(score)
+            model_scheme.append(scheme)
+            names.append('Experiment #%d'%(run+1))
+            elapsed = (time.time() - start)
+            et.append(elapsed)
+        report = pd.DataFrame({'Experiment': names, 'Elapsed Time': et, 'Score': results, 'Model': model_scheme,
+                               'Loss': losses, 'Optimizer': optimizers, 'Epochs': eps})
+        if self.strategy == 'classification_nn':
+            report.sort_values(by='Score', ascending=False, inplace=True)
+            score_type = 'f1-score'
+        else:
+            report.sort_values(by='Score', inplace=True)
+            score_type = 'RMSE'
+        report.reset_index(inplace=True, drop=True)
+        self.report_performance = report
+            
+        if printt:
+            print('\n')
+            print(self.report_width * '*', '\n*')
+            print('* NEURAL NETWORK RESULTS - BEFORE PARAMETERS BOOSTING \n*')
+            print(self.report_width * '*', '')
+            display(report)
+            print('\n')
+
+        if graph:
+            if 'mse' in self.history.keys():
+                fig, ax = plt.subplots(figsize=(size, 0.5 * size))
+                plt.title('Training Evolution')
+                plt.plot(self.history['mse'], label='training')
+                if 'val_mse' in self.history.keys(): plt.plot(self.history['val_mse'], label='test')
+                plt.xlabel('Epochs')
+                plt.ylabel('MSE')
+                plt.legend()
+                plt.subplots_adjust(hspace=0.0, bottom=0.25)
+                self.graphs_model.append(fig)
+                plt.show()             
+            if 'accuracy' in self.history.keys():
+                fig, ax = plt.subplots(figsize=(size, 0.5 * size))
+                plt.title('Training Evolution')
+                plt.plot(self.history['accuracy'], label='training')
+                if 'val_accuracy' in self.history.keys(): plt.plot(self.history['val_accuracy'], label='test')
+                plt.xlabel('Epochs')
+                plt.ylabel('Accuracy')
+                plt.legend()
+                plt.subplots_adjust(hspace=0.0, bottom=0.25)
+                self.graphs_model.append(fig)
+                plt.show()             
+            if 'loss' in self.history.keys():
+                fig, ax = plt.subplots(figsize=(size, 0.5 * size))
+                plt.title('Training Evolution')
+                plt.plot(self.history['loss'], label='training')
+                if 'val_loss' in self.history.keys(): plt.plot(self.history['val_loss'], label='test')
+                plt.xlabel('Epochs')
+                plt.ylabel('Loss')
+                plt.legend()
+                plt.subplots_adjust(hspace=0.0, bottom=0.25)
+                self.graphs_model.append(fig)
+                plt.show()  
+                
+        y_true = self.y_true
+        y_pred = self.y_pred
+        if self.strategy == 'classification_nn':
+            report = classification_report(y_true, y_pred, output_dict=True)
+            score = f1_score(y_true, y_pred, average='macro')
+            if printt:
+                print(self.report_width * '*', '\n*')
+                print('* HYPER-PARAMETER TUNING REPORT\n*')
+                print("* SCORING METHOD: %s" % score_type)
+                print('* BEST SCORE: %.1f %%' % (100 * score))
+                print('* TEST SIZE: %d' % len(y_true))
+                print('* LOSS: %s' % self.report_performance['Loss'].iloc[0])
+                print('* OPTIMIZER: %s' % self.report_performance['Optimizer'].iloc[0])
+                print('* EPOCHS: %d' % self.report_performance['Epochs'].iloc[0])
+                print('* BEST MODEL:', self.best_scheme)
+                print('*\n', self.report_width * '*')
+                if not graph:
+                    display(pd.DataFrame(report).T)
+                #self.best_model.summary()
+
+            if graph:
+                fig, ax = plt.subplots(figsize=(size, 0.3 * size))
+                plt.title('Confusion Matrix')
+                sns.heatmap(confusion_matrix(y_true, y_pred), annot=True, cmap='YlGn', fmt='d',)
+                plt.xlabel('Predicted')
+                plt.ylabel('True Class')
+                self.graphs_model.append(fig)
+                plt.show()
+                fig, ax = plt.subplots(figsize=(size, 0.5 * size))
+                plt.title('Classification Report')
+                sns.heatmap(pd.DataFrame(report).iloc[0:3].T, annot=True, vmin=0, vmax=1, cmap='BrBG', fmt='.2g')
+                plt.xlabel('Score')
+                self.graphs_model.append(fig)
+                plt.show()
+
+        else:
+            if printt:
+                print(self.report_width * '*', '\n*')
+                print('* HYPER-PARAMETER TUNING REPORT\n*')
+                print("* SCORING METHOD: %s" % score_type)
+                print('* TEST SIZE: %d' % len(y_true))
+                print('* LOSS: %s' % self.report_performance['Loss'].iloc[0])
+                print('* OPTIMIZER: %s' % self.report_performance['Optimizer'].iloc[0])
+                print('* EPOCHS: %d' % self.report_performance['Epochs'].iloc[0])
+                print('* BEST MODEL:', self.best_scheme)
+                print('*\n', self.report_width * '*')
+            if graph:
+                fig, ax = plt.subplots(figsize=(size, 0.5 * size))
+                plt.title('Model Overall Performance')
+                plt.scatter(y_true, y_pred, color='g')
+                viewer = lr()
+                plt.plot(y_true, viewer.fit(y_true, y_pred).predict(y_true), color='k')
+                plt.xlabel('Observed')
+                plt.ylabel('Predicted')
+                self.graphs_model.append(fig)
+                plt.show()
+            self.residual(y_true, y_pred, self.report_performance['Experiment'].iloc[0], printt, graph)
+            
+        return None
+
+
     # evaluate some models
     # metric can be any from one of those:
     # - grid search score metrics for sklearn classifiers
     # - grid search score metrics for sklearn regressors
     # - silhouette score metrics for sklearn clustering
-    def evaluate(self, test_size=0.2, transformX='None', transformY='None', folds=10, alphas=[], printt=True, graph=False, metric=''):
+    def evaluate(self, test_size=0.2, transformX='None', transformY='None', folds=10, alphas=[], xy=(0,0), printt=True, graph=False, metric=''):
         self.graphs_model = []
         if self.strategy == 'regression':
             if metric == '': metric = 'neg_mean_squared_error'
@@ -694,6 +1032,13 @@ class rubia_models:
             self.transform('X', transformX, graph) #model transf for X_train
             self.transform('y', transformY, graph) #model transf for y_train
             self.regression(metric, folds, alphas, printt, graph)
+        if self.strategy == 'regression_nn':
+            if metric == '': metric = 'mse'
+            self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(self.X, self.y, test_size=test_size, shuffle=True)
+            # transform data
+            self.transform('X', transformX, graph) #model transf for X_train
+            self.transform('y', transformY, graph) #model transf for y_train
+            self.searchANN(runs=10, max_depth=3, metric=metric, fixed={}, printt=printt, graph=graph)
         elif self.strategy == 'classification':
             if metric == '': metric = 'accuracy'
             self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(self.X, self.y, test_size=test_size, shuffle=True, stratify=self.y)
@@ -701,13 +1046,20 @@ class rubia_models:
             self.transform('X', transformX, graph) #model transf for X_train
             self.transform('y', transformY, graph) #model transf for y_train
             self.classification(metric, folds, printt, graph)
+        elif self.strategy == 'classification_nn':
+            if metric == '': metric = 'accuracy'
+            self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(self.X, self.y, test_size=test_size, shuffle=True, stratify=self.y)
+            # transform data
+            self.transform('X', transformX, graph) #model transf for X_train
+            self.transform('y', transformY, graph) #model transf for y_train
+            self.searchANN(runs=10, max_depth=3, metric=metric, fixed={}, printt=printt, graph=graph)
         elif self.strategy == 'clustering':
             if metric == '': metric = 'euclidean'
             self.X_train = self.X
             self.X_test = pd.DataFrame()
             # transform data
             self.transform('X', transformX, graph) #model transf for X_train
-            self.clustering(metric, printt, graph)
+            self.clustering(metric, xy, printt, graph)
         return None
 
 
@@ -734,6 +1086,8 @@ class rubia_models:
             if 'solver' in params: grid_params.update({'clf__solver':['svd','lsqr','eigen']})
         if 'n_neighbors' in params: grid_params.update({'clf__n_neighbors':groups})
         if 'weights' in params: grid_params.update({'clf__weights':['uniform','distance']})
+        if isinstance(model, sklearn.neighbors.KNeighborsClassifier):
+            if 'metric' in params: grid_params.update({'clf__metric':['euclidean','manhattan','cityblock','minkowski']})
         if 'p' in params: grid_params.update({'clf__p':[1, 2]})
         if 'C' in params: grid_params.update({'clf__C':pot10})
         if 'penalty' in params: grid_params.update({'clf__penalty':['l1','l2','elasticnet','none']})
@@ -781,7 +1135,7 @@ class rubia_models:
             for score in scores:
                 kfolds = KFold(n_splits=2, shuffle=True)
                 cv = kfolds.split(self.X_train, self.y_train)
-                gs = GridSearchCV(estimator=pipe, param_grid=grid_params, scoring=score, cv=cv)
+                gs = GridSearchCV(estimator=pipe, param_grid=grid_params, scoring=score, cv=cv, error_score=0.0)
                 gs.fit(self.X_train, self.y_train)
             self.best_model = gs.best_estimator_
 
@@ -791,7 +1145,7 @@ class rubia_models:
             for score in scores:
                 kfolds = StratifiedKFold(n_splits=2, shuffle=True)
                 cv = kfolds.split(self.X_train, self.y_train)
-                gs = GridSearchCV(estimator=pipe, param_grid=grid_params, scoring=score, cv=cv)
+                gs = GridSearchCV(estimator=pipe, param_grid=grid_params, scoring=score, cv=cv, error_score=0.0)
                 gs.fit(self.X_train, self.y_train)
             self.best_model = gs.best_estimator_
 
@@ -850,7 +1204,7 @@ class rubia_models:
 
 
     # given a model name, evaluate y_hat/y_pred/clusters and the overall performance of such model
-    def optimize(self, model_name, printt=True, graph=False, xy=(0,1), fixed={}):
+    def optimize(self, model_name, printt=True, graph=False, xy=(0,0), fixed={}):
         self.graphs_model = []
         size = self.graph_width
         model = self.models[model_name]
@@ -889,7 +1243,7 @@ class rubia_models:
                 print('* ')
                 print(self.report_width * '*', '\n')
                 if not graph:
-                    print(pd.DataFrame(report).T)
+                    display(pd.DataFrame(report).T)
             if graph:
                 fig, ax = plt.subplots(figsize=(size, 0.3 * size))
                 plt.title('Confusion Matrix')
@@ -928,6 +1282,8 @@ class rubia_models:
                 fig, ax = plt.subplots(figsize=(size, 0.5 * size))
                 plt.title('Cluster Segmentation')
                 plt.scatter(X[:, xy[0]], X[:, xy[1]], c=y_pred, s=50, cmap='viridis')
+                plt.xlabel(self.X_train.columns[xy[0]])
+                plt.ylabel(self.X_train.columns[xy[1]])
                 self.graphs_model.append(fig)
                 plt.show()
             return 'Silhouette: ' + str(round(score, 2))
@@ -980,11 +1336,15 @@ def selectDemo(id):
     return df, y_cols, ignore_cols
 
 run_demo = False
-id = -1
+priority = 'NN'
+#priority = 'Classical'
+id = 1 # -1 classifier multi | 4 binary | 1 regressor | 6 clustering
 graph = False
+graphm = True
 balance_tol = 0.3
 order = 1
 ncomponents = 2
+enc = 'LabelEncoder'
 xy = (0, 1)
 fixed = {'k': 3}
 if run_demo:
@@ -1001,7 +1361,15 @@ if run_demo:
     rm.explore(rm.data_raw, y_cols, ignore_cols, graph=graph) #updates X, y, M
 
     # encode every column of type object or string to categorical numbers
-    rm.encode(encoder='LabelEncoder')
+    if priority == 'Classical':
+        rm.encode(encoder='LabelEncoder', who='both') # classical only accepts single output right now
+    else:
+        if enc == 'LabelEncoder':
+            rm.encode(encoder='LabelEncoder', who='both')
+        else:
+            rm.encode(encoder='LabelEncoder', who='X')
+            rm.encode(encoder='OneHotEncoder', who='Y')
+        y_cols = list(rm.y.columns) # update y_cols after the OneHotEncoder
 
     # this method makes an auto balance for each class, using the minority class
     # only applies if the dataset size variation is under tolerance value
@@ -1011,16 +1379,17 @@ if run_demo:
     # be carefull when using higher level terms and graphs together, less powerfull hardware can bottleneck with higher complexity
     rm.addTerms(rm.X, rm.y, levels=order, interaction=False, root=False)
     rm.explore(rm.M, y_cols, ignore_cols, graph=graph) #updates X, y, M
+    y_cols = list(rm.y.columns) # update y_cols after an exploratory that could remove constant columns
 
     # analyse if this is a regression, classification or clustering problem and evaluate some models
     # when y is float or has more then 10 different classes, the algorithm turns into a regression algorithm automatically
     # else it will perform a classification modeling
     # in multilevel problems, if one of the ys is identified as regression, then the entire process is set to regression mode
     # this routine also drops any column of constant value, if it exists
-    rm.analyse(y_cols)
+    rm.analyse(y_cols, priority=priority)
 
     # dimensionality reduction
-    if ncomponents > 1: 
+    if ncomponents > 0: 
         rm.redux(k=ncomponents, mode='pca', transform='MinMax')
         print('Explained variance (%)', rm.scalerX_pca.explained_variance_ratio_.sum())
     elif len(rm.X.columns) > 10: 
@@ -1028,10 +1397,11 @@ if run_demo:
 
     # evaluate the performance of a mix of models
     alphas = 10 ** np.linspace(10, -2, 100) * 0.5
-    rm.evaluate(test_size=0.3, transformX='Standard', transformY='None', folds=10, alphas=alphas, graph=graph)
+    rm.evaluate(test_size=0.3, transformX='Standard', transformY='None', folds=10, alphas=alphas, xy=xy, graph=graphm)
 
     # apply tuning to the best models
-    rm.optimize(str(rm.report_performance.Model.iloc[0]), graph=graph, xy=xy, fixed=fixed)
+    if rm.strategy[-3:] != '_nn':
+        rm.optimize(str(rm.report_performance.Model.iloc[0]), graph=graphm, xy=xy, fixed=fixed)
 
 
 
@@ -1047,6 +1417,10 @@ if run_demo:
 
 
 # TO DO
+
+# break the searchANN function in smaller functions
+# add weights (new column) to NN results (add time, accuracy, f1score, accuracy evolution)
+# implement number of generations and genetic to the NN booster
 
 # implement multioutput (not planned)
 # adjust redux(k='auto') to calculate the optimal value for k (not planned)

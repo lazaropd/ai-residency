@@ -7,6 +7,7 @@
 
 
 import base64 
+import json
 
 import pandas as pd
 import numpy as np
@@ -14,6 +15,8 @@ import streamlit as st
 
 import scipy
 from scipy.io.arff import loadarff
+
+from sklearn.metrics import classification_report, f1_score
 
 import SessionState
 import rubia_models
@@ -128,6 +131,8 @@ def loadData(uploaded_file):
 st.sidebar.title('Setup')
 
 st.sidebar.markdown('---')
+ph_s0 = st.sidebar.empty()
+ph_s01 = st.sidebar.empty()
 ph_s1 = st.sidebar.empty()
 ph_s2 = st.sidebar.empty()
 ph_s3 = st.sidebar.empty()
@@ -205,10 +210,10 @@ else:
 
     if ph_c4.checkbox('Encode', True): # encode non numeric or numeric like columns
         if ph_c41.checkbox('One Hot Encoder'):
-            state.rm.encode(encoder='OneHotEncoder')
+            state.rm.encode(encoder='OneHotEncoder', who='both')
             y_cols = list(state.rm.y.columns) # update the list of y columns after a One Hot Encode process
         else:
-            state.rm.encode(encoder='LabelEncoder')
+            state.rm.encode(encoder='LabelEncoder', who='both')
 
     # add auto balance correction if applicable/selected
     if balance_tol > 0 and len(y_cols) == 1:
@@ -228,7 +233,9 @@ else:
     ph_b1 = st.empty()
     ph_b2 = st.empty()
     
-    state.rm.analyse(y_cols) # decide the model type (regr, class, cluster)
+    priority = ph_s0.selectbox('Preferred approach', ['Classical', 'Neural Network'])
+    if priority != 'Classical': ph_s01.error('Neural networks can take a while to train. Coffee time!')
+    state.rm.analyse(y_cols, priority=priority) # decide the model type (regr, class, cluster)
     # only apply y transformation for single variable regression
     if state.rm.strategy != 'regression' or len(y_cols) > 1:
         ph_s6.empty()
@@ -237,10 +244,11 @@ else:
     countk = len(state.rm.X.columns)
     pca = 0
     kbest = 10 if countk > 10 else countk
+    pca = kbest
     redux_mode = ph_s31.selectbox('Dimensionality reduction mode', ['K Best Chi-square', 'PCA'])
     if redux_mode == 'PCA':
-        pca = ph_s32.slider('Limit N principal components', 0, countk, 0)
-        if pca > 1:
+        pca = ph_s32.slider('Limit N principal components', 1, countk, pca)
+        if pca > 0:
             if ph_s315.checkbox('Adjust feature scaling'):
                 state.rm.redux(k=pca, mode='pca', transform='MinMax')
             else:
@@ -261,12 +269,16 @@ else:
 
     if ph_b1.button('EVALUATE'): # start the evaluation and performance tests
         alphas = 10 ** np.linspace(10, -2, 100) * 0.5
-        state.rm.evaluate(test_size=set_trainingsize, transformX=xtransform, transformY=ytransform, folds=10, alphas=alphas, printt=False, graph=graphm, metric='')
+        state.rm.evaluate(test_size=set_trainingsize, transformX=xtransform, transformY=ytransform, folds=10, alphas=alphas, xy=(0,1), printt=False, graph=graphm, metric='')
         st.title('RESULTS - BEFORE BOOSTING')
         st.write(state.rm.report_performance)
 
         # boost the best model
         best = state.rm.report_performance.Model.iloc[0]
+        try:
+            best =str(best)
+        except:
+            pass
         st.success('**Best model:** ' + best)
         state.success = True
         for fig in state.rm.graphs_expl:
@@ -274,23 +286,58 @@ else:
         for fig in state.rm.graphs_model:
             st.pyplot(fig)      
 
-    if state.success: # show advanced boosting parameters
+    if state.success and priority == 'Classical': # show advanced boosting parameters
         st.title('BOOSTING')
         boost = st.selectbox('Choose a model to boost', state.rm.report_performance.Model)
         cols_dict = {col: i for i, col in enumerate(state.rm.X.columns)}
         x1 = st.selectbox('Select a variable to show on x-axis', state.rm.X.columns, 0)
-        x2 = st.selectbox('Select a variable to show on y-axis', state.rm.X.columns, 1)
+        if len(state.rm.X.columns) > 1:
+            x2 = st.selectbox('Select a variable to show on y-axis', state.rm.X.columns, 1)
+        else:
+            x2 = x1
         xy = (cols_dict[x1], cols_dict[x2])
         nclusters = st.slider('Fix the number of clusters/neighbors in (0=no_constrains)', 0, 20, 0)
         fixed = {'k': nclusters} if nclusters > 0 else {}
         st.success('**Boosting model:** ' + str(boost))
         if st.button('Choose & Boost'):
             st.title('HYPER-PARAMETER TUNING REPORT')
-            result = state.rm.optimize(str(boost), printt=False, graph=graphm, xy=xy, fixed=fixed)
-            st.write(state.rm.best_model)
-            st.success(result)
-            for fig in state.rm.graphs_model:
-                st.pyplot(fig)     
+            if state.rm.strategy[-3:] != '_nn':
+                result = state.rm.optimize(str(boost), printt=False, graph=graphm, xy=xy, fixed=fixed)
+                st.write(state.rm.best_model)
+                st.success(result)
+                for fig in state.rm.graphs_model:
+                    st.pyplot(fig)   
+
+    elif state.success and priority != 'Classical':
+        y_true = state.rm.y_true
+        y_pred = state.rm.y_pred
+        
+        if state.rm.strategy == 'classification_nn':
+            report = classification_report(y_true, y_pred, output_dict=True)
+            score = f1_score(y_true, y_pred, average='macro')
+            st.title('HYPER-PARAMETER TUNING REPORT')
+            st.write("SCORING METHOD: %s" % 'f1-score')
+            st.write('BEST SCORE: %.1f %%' % (100 * score))
+            st.write('TEST SIZE: %d' % len(y_true))
+            st.write('LOSS: %s' % state.rm.report_performance['Loss'].iloc[0])
+            st.write('OPTIMIZER: %s' % state.rm.report_performance['Optimizer'].iloc[0])
+            st.write('EPOCHS: %d' % state.rm.report_performance['Epochs'].iloc[0])
+            st.write('BEST MODEL:', str(state.rm.best_scheme))
+            if not graphm:
+                st.write(pd.DataFrame(report).T)
+
+        elif state.rm.strategy == 'regression_nn':
+            print('* HYPER-PARAMETER TUNING REPORT\n*')
+            print("* SCORING METHOD: %s" % 'mse')
+            score = state.rm.calc_rmse(y_true, y_pred)
+            r2 = state.rm.calc_r2(y_true, y_pred)
+            st.write('BEST RMSE: %.2f' % (score))
+            st.write('R2 SCORE: %.1f %%' % (100 * r2))
+            print('* TEST SIZE: %d' % len(y_true))
+            print('* LOSS: %s' % state.rm.report_performance['Loss'].iloc[0])
+            print('* OPTIMIZER: %s' % state.rm.report_performance['Optimizer'].iloc[0])
+            print('* EPOCHS: %d' % state.rm.report_performance['Epochs'].iloc[0])
+            print('* BEST MODEL:', state.rm.best_scheme)
 
     if not state.success:
         st.title('AUTO MODELING - ' + state.rm.strategy.upper())
