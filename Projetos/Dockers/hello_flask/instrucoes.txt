@@ -1,0 +1,27 @@
+
+
+# Criar a imagem
+sudo docker build --tag hello_flask_app .
+
+# Rodar a imagem como um contêiner
+sudo docker run --name hello_flask -p 5000:5000 hello_flask_app
+
+# Conferir se está executando corretamente
+abrir 0.0.0.0:5000 no navegador
+
+# Listar dockers em execução
+sudo docker ps
+
+# Encerrar o docker em execução
+sudo docker rm --force hello_flask
+(observar que o host 0.0.0.0:5000 parou de responder)
+
+# Conectar ao docker hub
+sudo docker login
+
+# Atribuir uma tag para o usuário e versão
+sudo docker image tag hello_flask_app lazaropd/hello_flask_app:1.0
+
+# Subir imagem para o docker hub
+sudo docker image push lazaropd/hello_flask_app:1.0
+

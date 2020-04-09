@@ -1,0 +1,31 @@
+
+
+# Sobre os arquivos
+- o projeto demo.py recebe 1 argumento obrigatório int e 1 argumento opcional string
+- o demo.py chama o myclass.py, inicializa e executa a operação demandada
+
+
+# Criar a imagem
+sudo docker build --tag parser_app .
+
+# Rodar a imagem como um contêiner
+# Experimente mudar os valores após parser_app
+sudo docker run --rm --name parser parser_app 7 -o linear
+
+# Listar dockers em execução
+sudo docker ps
+
+# Encerrar o docker em execução
+sudo docker rm --force parser_app
+
+# Conectar ao docker hub
+sudo docker login
+
+# Atribuir uma tag para o usuário e versão
+sudo docker image tag parser_app lazaropd/parser_app:1.0
+
+# Subir imagem para o docker hub
+sudo docker image push lazaropd/parser_app:1.0
+
+# Caso precise remover a imagem
+sudo docker image rm -f parser_app
