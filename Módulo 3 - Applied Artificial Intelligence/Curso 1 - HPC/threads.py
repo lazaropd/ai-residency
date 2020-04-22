@@ -11,8 +11,8 @@ from queue import Queue
 
 import time
 
-SIZE = 10 # número de repetições a ser realizada
-
+SIZE = 50 # número de repetições a ser realizada
+BUFFER = 20
 
 
 # a função que será paralelizada para outros núcleos
@@ -68,7 +68,22 @@ def myLaggyFunction():
             queue1.put(number)
             i += 1
         if i > SIZE: stop = True
+        time.sleep(0.1) # simulando uma demora de 100ms em cada run
+
+# esta função faz a mesma coisa que a anterior, mas sem usar queues
+def myLaggyRaw():
+    global SIZE
+    numbers = []
+    stop = False
+    i = 0
+    while True:
+        if stop: return numbers
+        number = 100 * np.random.randint(10, 20)
+        numbers.append(number)
         time.sleep(0.1)
+        i += 1
+        if i > SIZE: stop = True
+    return numbers
 
 # aqui recuperamos o próximo elemento pronto e disponível na lista
 def getQueued(i):
@@ -102,7 +117,7 @@ print('Tempo de execução usando apenas 1 núcleo: %.2f' % (time.time() - start
 time.sleep(1)
 
 
-# para rodar todos os processos na fila, basta dar start em cada um deles
+# para rodar todos os processos paralelamente e usando todos os recursos
 procs = myPlanner(numbers)
 start = time.time()
 runProcs(procs)
@@ -122,14 +137,22 @@ for workers in range(1, int(0.9 * multiprocessing.cpu_count())):
 # esse gerenciamento pode ser feito de várias formas, usando queues por exemplo
 # abaixo uma implementação simulando um processo lento sendo removido da thread principal
 start = time.time()
-queue1 = Queue(maxsize=10)
+queue1 = Queue(maxsize=BUFFER)
 startMyTask(myLaggyFunction, 1)
 i = 0
 while i < SIZE:
     if getQueued(i): i += 1
-    time.sleep(0.1)
-print('Tempo de execução usando %d workers no POOL: %.2f' % (workers, time.time() - start))
+print('Tempo de execução colocando a função lagger em paralelo: %.2f' % (time.time() - start))
+
+# finalmente rodando a função lagger na thread principal
+start = time.time()
+numbers = myLaggyRaw()
+i = 0
+for number in numbers:
+    myIntensiveTask(number)
+print('Tempo de execução mantendo a função lagger na thread principal: %.2f' % (time.time() - start))
 
 
 
-#export OMP_NUM_THREADS=1 ; time python aula.py
+# export OMP_NUM_THREADS=1 ; time python aula.py
+# para checar a utilização de núcleos usar top, em vez de htop
