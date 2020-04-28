@@ -138,6 +138,7 @@ ph_s2 = st.sidebar.empty()
 ph_s3 = st.sidebar.empty()
 ph_s31 = st.sidebar.empty()
 ph_s32 = st.sidebar.empty()
+ph_s325 = st.sidebar.empty()
 ph_s315 = st.sidebar.empty()
 ph_s4 = st.sidebar.empty()
 ph_s5 = st.sidebar.empty()
@@ -199,6 +200,7 @@ else:
         st.write(state.rm.data_raw.sample(5))
         st.write('STATISTICS: ')
         st.write(state.rm.data_raw.describe(include='all').T)
+        st.markdown('---')
 
     graph = ph_c2.checkbox('Exploratory graphs')  
     state.rm.explore(state.rm.data_raw, y_cols, ignore_cols, printt=False, graph=graph) #updates X, y, M and remove constant columns
@@ -256,8 +258,11 @@ else:
             st.warning('PCA explained variance: %.1f %%' % (100*state.rm.scalerX_pca.explained_variance_ratio_.sum()))
     else:
         kbest = ph_s32.slider('Limit K best features', 1, countk, kbest)
-        if kbest != countk: 
-            state.rm.redux(k=kbest)
+#        if kbest != countk: 
+#            if ph_s325.checkbox('Apply dimensionality reduction'):
+#                response = state.rm.redux(k=kbest)
+#                if response:
+#                    ph_s325.error(response)
 
     if ph_c3.checkbox('Show features'):  
         st.title('FEATURE EXTRACTION REPORT')

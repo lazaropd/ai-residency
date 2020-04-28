@@ -67,6 +67,9 @@ import tensorflow
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout 
 
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
 
 class rubia_models:
 
@@ -318,10 +321,13 @@ class rubia_models:
         if k == 'auto':
             k = 10 # require deeper implementation
         if mode == 'chi-square' and self.X.shape[1] >= k and self.y.shape[1] > 0:
-            selector = SelectKBest(chi2, k=k)
-            best_features = selector.fit_transform(self.X, self.y)
-            mask = selector.get_support(indices=True)
-            self.X = self.X.iloc[:,mask]
+            try:
+                selector = SelectKBest(chi2, k=k)
+                best_features = selector.fit_transform(self.X, self.y)
+                mask = selector.get_support(indices=True)
+                self.X = self.X.iloc[:,mask]
+            except:
+                return 'Cannot perform chi-square test. Maybe there are negative values in the dataset?'
         elif mode == 'pca' and self.X.shape[1] >= k:
             if transform != 'None':
                 scaler = MinMaxScaler() # only minmax supported right now
@@ -1329,21 +1335,26 @@ def selectDemo(id):
         df = pd.read_csv('../../../bigdata/jet/full_data.csv')
         y_cols = ['class']
         ignore_cols = ['class']   
+    elif id == 8:
+        df = pd.read_csv('dataset/e7.csv')
+        y_cols = ['delta']
+        ignore_cols = ['safra']    
     else:
         df = pd.read_csv('dataset/iris.csv')
         y_cols = ['species']
         ignore_cols = []
     return df, y_cols, ignore_cols
 
-run_demo = False
+
+run_demo = True
 priority = 'NN'
 #priority = 'Classical'
-id = 1 # -1 classifier multi | 4 binary | 1 regressor | 6 clustering
-graph = False
+id = 8 # -1 classifier multi | 4 binary | 1 regressor | 6 clustering
+graph = True
 graphm = True
 balance_tol = 0.3
 order = 1
-ncomponents = 2
+ncomponents = 40
 enc = 'LabelEncoder'
 xy = (0, 1)
 fixed = {'k': 3}

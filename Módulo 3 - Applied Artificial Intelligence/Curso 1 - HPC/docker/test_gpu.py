@@ -42,3 +42,6 @@ with tf.device('/GPU:' + str(gpu_slot)):
     # Printing how long it took with CPU
     end = time.time() - start
     print("GPU: ",end)
+
+
+print('Test ended')
