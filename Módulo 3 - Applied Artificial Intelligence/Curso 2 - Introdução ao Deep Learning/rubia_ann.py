@@ -30,6 +30,8 @@ from sklearn.metrics import r2_score, mean_squared_error
 from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 from sklearn.model_selection import GridSearchCV, KFold, StratifiedKFold
+from joblib import parallel_backend
+from joblib.externals.loky import get_reusable_executor
 import scipy.stats as stats
 
 
@@ -132,7 +134,8 @@ class gcCallback(tf.keras.callbacks.Callback):
 
 class simpler_keras():
     
-    def __init__(self, X, y, mode, gpu=False, workers=4, fixed_genes={}):        
+    def __init__(self, X, y, mode, gpu=False, workers=-3, fixed_genes={}):        
+        self.release()
         print('\nAvailable modes: regression, binary, multi, multioutput')
         self.mode = mode
         self.gpu = gpu
@@ -147,6 +150,7 @@ class simpler_keras():
         self.y = y
         
     def release(self):
+        get_reusable_executor().shutdown(wait=True)
         tf.keras.backend.clear_session()
         gc.collect()
 
@@ -167,7 +171,7 @@ class simpler_keras():
         print('{:25s}'.format('Number of generations:'), self.gens)
         print('{:25s}'.format('Proportion on strain:'), self.parent_portion)
         print('{:25s}'.format('DNA length:'), len(self.individuals[0]))
-        print('{:25s}'.format('Genes available to mutate:\n'), self.mutable)
+        print('{:25s}'.format('\nGenes available to mutate:\n'), self.mutable)
         
     def importers(self):        
         print('\nVersions:')
@@ -189,6 +193,7 @@ class simpler_keras():
                     print('Number of workers adjusted to fit the GPUs available')
                 print('Using %d GPU workers' % self.workers)
                 self.testGPU()
+        if self.workers < 0: print('Negative workers means all available except N-1')
         
     def testGPU(self):
         cpu_slot, gpu_slot = 0, 0
@@ -262,7 +267,7 @@ class simpler_keras():
         individual[mutate_on] = (mutate_key, mutation)
         return individual
     
-    def setGenetic(self, input_dim, output_dim, metrics=None, topology=['Dense','Dense'], population=10, generations=3, keep_portion=0.2):
+    def setGenetic(self, input_dim, output_dim, metrics=None, topology=['Dense','Dense'], population=10, generations=3, keep_portion=0.3):
         self.topology = topology
         self.pop = population
         self.gens = generations
@@ -317,9 +322,10 @@ class simpler_keras():
         model.compile(optimizer=individual[seq][1], loss=individual[seq+1][1], metrics=self.metrics)
         return model
 
-    def runGenerations(self, cv=2, validation_split=0.2, n_mutations=2, crossover=0.5, performance_cap=0.1, verbose=0):
+    def runGenerations(self, cv=3, validation_split=0.2, n_mutations=2, crossover=0.5, performance_cap=0.1, verbose=0):
         self.describe()
         print('\nNeural network train starting...')
+        print('Testing %d folds for %d individuals in %d generations. Total of %d models' % (cv, self.pop, self.gens, cv * self.pop * self.gens))
         scores = np.zeros(self.pop)
         metric = self.metrics[0]
         for i, generation in enumerate(range(self.gens)):
@@ -344,12 +350,12 @@ class simpler_keras():
             if self.mode != 'regression':
                 model = myKerasWrapper(build_fn=self.prepareModel, **{'verbose': verbose, 'mode': self.mode, 
                                                             'metrics': metric, 'validation_split': validation_split})
-                cvf = KFold(n_splits=cv, shuffle=True)
+                cvf = StratifiedKFold(n_splits=cv, shuffle=True)
             else:
                 metric = metric.replace('mse','neg_mean_squared_error')
                 model = myKerasWrapperR(build_fn=self.prepareModel, **{'verbose': verbose, 'mode': self.mode, 
                                                             'metrics': metric, 'validation_split': validation_split})
-                cvf = StatifiedKFold(n_splits=cv, shuffle=True)
+                cvf = KFold(n_splits=cv, shuffle=True)
             grid = GridSearchCV(estimator=model, param_grid=param_grid, n_jobs=self.workers, cv=cvf, verbose=verbose, 
                                 scoring=metric, return_train_score=True)
             grid_result = grid.fit(self.X, self.y)
@@ -364,7 +370,7 @@ class simpler_keras():
         print('Best score: %.2f' % grid_result.best_score_)
         #print('Best params:', grid_result.best_params_)
         best_model_desc = self.individuals[grid_result.best_params_['individual']]
-        print('Best model:', ' - '.join([(v[0]+': '+str(v[1])).replace('denses','\ndenses').replace('optim','\noptim').replace('epochs','\nepochs') for k, v in best_model_desc.items()]))
+        print('Best model:', ' - '.join([(v[0]+': '+str(v[1])).replace('denses','\ndenses').replace('last_','\nlast_').replace('optim','\noptim').replace('epochs','\nepochs') for k, v in best_model_desc.items()]))
         self.best_model = self.prepareModel(**grid_result.best_params_)
         self.best_model.summary()
         epochs = best_model_desc[DNA_len-2][1]
@@ -381,7 +387,7 @@ class simpler_keras():
         cv_train = scaler.fit_transform((results.cv_results_['std_train_score'] / results.cv_results_['mean_train_score']).reshape(-1, 1))
         cv_test = scaler.fit_transform((results.cv_results_['std_test_score'] / results.cv_results_['mean_test_score']).reshape(-1, 1))
         timing = scaler.fit_transform(results.cv_results_['mean_fit_time'].reshape(-1, 1))
-        mean_score = (mean_train + mean_test) / 2
+        mean_score = (mean_train + 3 * mean_test) / 4
         perf_score = (0.4 * cv_train + 0.4 * cv_test + 0.2 * timing) * performance_cap
         scores = (mean_score * (1 - perf_score)).flatten()
         #print('Scores:', scores)
@@ -404,9 +410,9 @@ class simpler_keras():
         plt.legend()
         plt.show()   
         if self.mode == 'regression':
-            self.printPerformanceR()
+            self.printPerformanceR(self.X, self.y)
         else:
-            self.printPerformanceC()   
+            self.printPerformanceC(self.X, self.y)   
 
     def calc_rss(self, residual):
         return float(((residual) ** 2).sum())         
@@ -415,9 +421,9 @@ class simpler_keras():
     def calc_r2(self, y, y_hat):
         return r2_score(y_hat, y)
 
-    def printPerformanceR(self):
-        y = self.y.reshape(-1,1)
-        y_hat = self.best_model.predict(self.X).reshape(-1,1)
+    def printPerformanceR(self, X, y):
+        y = y.reshape(-1,1)
+        y_hat = self.best_model.predict(X).reshape(-1,1)
         sample_size = len(y_hat)
         res = y - y_hat
         obs = np.arange(1, sample_size+1).reshape(-1, 1)
@@ -447,9 +453,9 @@ class simpler_keras():
         plt.show()
         print('RMSE: %.2f | R2: %.2f' % (self.calc_rmse(y, y_hat), self.calc_r2(y, y_hat)))
 
-    def printPerformanceC(self):
-        y_true = self.y 
-        y_pred = self.best_model.predict_classes(self.X)
+    def printPerformanceC(self, X, y):
+        y_true = y 
+        y_pred = self.best_model.predict_classes(X)
         report = classification_report(y_true, y_pred, output_dict=True)
         fig, ax = plt.subplots(figsize=(12, 6))
         plt.title('Confusion Matrix')
@@ -469,7 +475,7 @@ class simpler_keras():
 
 
 # demo of the use of this simpler_keras class
-run_demo = True
+run_demo = False
 
 if run_demo:
 
@@ -519,7 +525,8 @@ if run_demo:
     k.runGenerations(cv=2, validation_split=0.1, n_mutations=3, crossover=0.8, performance_cap=0.1, verbose=0)
     print('Total elapsed time (s): %.2f' % (time.time() - start))
 
-
+    k.release()
+    del k
 
 
     
