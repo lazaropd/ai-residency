@@ -219,44 +219,55 @@ class simpler_keras():
             self.genes.update({'activators': reg_activation if self.mode=='regression' else clf_activation})
         if not 'last_activation' in self.genes.keys():
             reg_activation = ['relu', 'linear']
-            clf_activation = ['sigmoid', 'softmax']
+            clf_activation = ['sigmoid', 'softmax','relu']
             self.genes.update({'last_activation': reg_activation if self.mode=='regression' else clf_activation})
         if not 'losses' in self.genes.keys():
-            reg_loss = ['mean_squared_error', 'mean_absolute_error', 'hinge', 'logcosh']
-            clf_binary_loss = ['mean_squared_error', 'mean_absolute_error',
-                                  'binary_crossentropy', 'categorical_hinge', 'hinge', 'logcosh']
-            clf_multi_loss = ['sparse_categorical_crossentropy', 'categorical_hinge', 'hinge', 'logcosh']
-            clf_multioutput_loss = ['mean_squared_error', 'mean_absolute_error', 
-                                   'binary_crossentropy', 'categorical_crossentropy',
-                                   'categorical_hinge', 'hinge', 'logcosh']
+            reg_loss = ['mean_squared_error', 'mean_absolute_error']
+            clf_binary_loss = ['mean_squared_error', 'binary_crossentropy']
+            clf_multi_loss = ['sparse_categorical_crossentropy', 'logcosh']
+            clf_multioutput_loss = ['mean_squared_error', 'binary_crossentropy', 'categorical_crossentropy']
             loss = reg_loss if self.mode=='regression' else clf_binary_loss if self.mode=='binary' else clf_multi if self.mode=='multi' else clf_multioutput_loss
             self.genes.update({'losses': loss})
         if not 'optimizers' in self.genes.keys():
-            self.genes.update({'optimizers': ['sgd', 'adam', 'adagrad', 'rmsprop', 'adadelta']})
+            self.genes.update({'optimizers': ['sgd', 'adam', 'adagrad', 'rmsprop']})
         if not 'denses' in self.genes.keys():
-            self.genes.update({'denses': [0] + [2 ** i for i in range(0, 7)]})
+            self.genes.update({'denses': [0] + [2 ** i for i in range(2, 6)]})
         if not 'dropout' in self.genes.keys():
             self.genes.update({'dropout': [True, False]})
         if not 'dropout_rate' in self.genes.keys():
-            self.genes.update({'dropout_rate': [i/10 for i in range(1, 5)]})
+            self.genes.update({'dropout_rate': [0.1, 0.3, 0.5]})
         self.mutable = [key for key in self.genes.keys() if len(self.genes[key]) > 1]
 
     def sampler(self, key):
-        return random.sample(self.genes[key], 1)[0]
+        if key != 'dropout':
+            return random.sample(self.genes[key], 1)[0]
+        elif key == 'dropout':
+            dropout = random.sample(self.genes[key], 1)[0]
+            if dropout: 
+                return dropout, random.sample(self.genes['dropout_rate'], 1)[0]
+            else:
+                return dropout, 0.0
 
     def crossover(self, parents):
         p1 = self.individuals[parents[0]]
         p2 = self.individuals[parents[1]]
+        #print('\nCrossover')
         #print(p1)
         #print(p2)
         child = {}
         for k, v in p1.items():
-            child.update({k: p1[k] if random.random() > 0.5 else p2[k]})
+            cross = random.random() > 0.5
+            if v[0] != 'dropout_rate':
+                child.update({k: p1[k] if cross else p2[k]})
+            if v[0] == 'dropout':
+                child.update({k+1: p1[k+1] if cross else p2[k+1]})
         #print(child)
         return child
 
     def mutate(self, individual):
         mutable = []
+        #print('\nMutation')
+        #print(individual)
         for k, v in individual.items():
             if v[0] in self.mutable:
                 mutable.append(k)
@@ -265,9 +276,17 @@ class simpler_keras():
         variations = [gene for gene in self.genes[mutate_key] if gene != individual[mutate_on][1]]
         mutation = random.sample(variations, 1)[0]
         individual[mutate_on] = (mutate_key, mutation)
+        if mutate_key == 'dropout':
+            if mutation == False:
+                individual[mutate_on+1] = ('dropout_rate', 0.0)
+            else:
+                individual[mutate_on+1] = ('dropout_rate', self.sampler('dropout_rate'))
+        if mutate_key == 'dropout_rate':
+            individual[mutate_on-1] = ('dropout', True)
+        #print(individual)
         return individual
     
-    def setGenetic(self, input_dim, output_dim, metrics=None, topology=['Dense','Dense'], population=10, generations=3, keep_portion=0.3):
+    def setGenetic(self, input_dim, output_dim, metrics=None, topology=['Dense','Dense'], population=20, generations=3, keep_portion=0.3):
         self.topology = topology
         self.pop = population
         self.gens = generations
@@ -285,7 +304,7 @@ class simpler_keras():
             for i, layer in enumerate(topology):
                 if layer == 'Dense':
                     neurons, activator = self.sampler('denses'), self.sampler('activators')
-                    dropout, dropout_rate = self.sampler('dropout'), self.sampler('dropout_rate')
+                    dropout, dropout_rate = self.sampler('dropout')
                     if neurons == 0 and i == 0: neurons = 1
                     DNA.update({seq: ('denses', neurons)})
                     DNA.update({seq+1: ('activators', activator)})
@@ -322,7 +341,7 @@ class simpler_keras():
         model.compile(optimizer=individual[seq][1], loss=individual[seq+1][1], metrics=self.metrics)
         return model
 
-    def runGenerations(self, cv=3, validation_split=0.2, n_mutations=2, crossover=0.5, performance_cap=0.1, verbose=0):
+    def runGenerations(self, cv=3, validation_split=0.1, n_mutations=3, crossover=0.5, performance_cap=0.05, verbose=0):
         self.describe()
         print('\nNeural network train starting...')
         print('Testing %d folds for %d individuals in %d generations. Total of %d models' % (cv, self.pop, self.gens, cv * self.pop * self.gens))
@@ -380,6 +399,7 @@ class simpler_keras():
 
     def evaluate(self, results, performance_cap):
         scaler = MinMaxScaler()
+        #print(results.cv_results_)
         mean_train = results.cv_results_['mean_train_score'].reshape(-1, 1)
         mean_train = scaler.fit_transform(mean_train)
         mean_test = results.cv_results_['mean_test_score'].reshape(-1, 1)
@@ -388,7 +408,7 @@ class simpler_keras():
         cv_test = scaler.fit_transform((results.cv_results_['std_test_score'] / results.cv_results_['mean_test_score']).reshape(-1, 1))
         timing = scaler.fit_transform(results.cv_results_['mean_fit_time'].reshape(-1, 1))
         mean_score = (mean_train + 3 * mean_test) / 4
-        perf_score = (0.4 * cv_train + 0.4 * cv_test + 0.2 * timing) * performance_cap
+        perf_score = (0.2 * cv_train + 0.6 * cv_test + 0.2 * timing) * performance_cap
         scores = (mean_score * (1 - perf_score)).flatten()
         #print('Scores:', scores)
         params = results.cv_results_['params']
@@ -508,10 +528,10 @@ if run_demo:
         'losses': ['mse'],
         'activators': ['relu','elu'],
         'last_activation': ['relu','linear'],
-        'denses': [2 ** i for i in range(2, 5)],
-        'dropout': [False],
-        'dropout_rate': [0.1],
-        'epochs': [5, 10, 20],
+        'denses': [2 ** i for i in range(2, 6)],
+        'dropout': [True, False],
+        'dropout_rate': [0.1, 0.3, 0.5],
+        'epochs': [10, 20, 30],
         'batch_size': [10, 200, 400, 800]
     }
 
@@ -520,7 +540,7 @@ if run_demo:
     k = simpler_keras(X=X, y=y, mode=mode, gpu=False, workers=10, fixed_genes=GENES)
     k.check()
 
-    k.setGenetic(topology=topology, population=5, generations=2, keep_portion=0.5, input_dim=input_dim, output_dim=output_dim, metrics=metric)
+    k.setGenetic(topology=topology, population=5, generations=4, keep_portion=0.5, input_dim=input_dim, output_dim=output_dim, metrics=metric)
 
     k.runGenerations(cv=2, validation_split=0.1, n_mutations=3, crossover=0.8, performance_cap=0.1, verbose=0)
     print('Total elapsed time (s): %.2f' % (time.time() - start))
