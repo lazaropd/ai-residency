@@ -1,5 +1,5 @@
 {
-    "python.pythonPath": "D:\\Tools\\Anaconda3\\envs\\PythonGPU\\python.exe",
+    "python.pythonPath": "/home/lazarop/miniconda3/envs/tfgpu/bin/python",
     "python.linting.pylintEnabled": true,
     "python.linting.enabled": true
 }
