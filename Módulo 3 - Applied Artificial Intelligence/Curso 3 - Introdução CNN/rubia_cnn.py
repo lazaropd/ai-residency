@@ -43,7 +43,8 @@ class cnn_keras():
         self.workers = workers
         self.check()
         self.loadData(X, y)
-        self.describe()
+        if X and y:
+            self.describe()
         
     def loadData(self, X, y):
         #self.X = tf.convert_to_tensor(X)
@@ -122,7 +123,10 @@ class cnn_keras():
 
     def printPerformanceC(self, X, y, model=None):
         if model:
-            y_true = y if y.shape[1] == 1 else np.argmax(y, axis=1)
+            if y.ndim == 1:
+                y_true = y
+            else:
+                y_true = y if y.shape[1] == 1 else np.argmax(y, axis=1)
             y_pred = model.predict_classes(X)
             report = classification_report(y_true, y_pred, output_dict=True)
             fig, ax = plt.subplots(figsize=(12, 6))
