@@ -17,7 +17,7 @@ from IPython.display import display, HTML, clear_output
 
 import tensorflow as tf
 from tensorflow import keras
-from tensorflow.keras.models import Sequential
+from tensorflow.keras.models import Model, Sequential
 from tensorflow.keras.layers import BatchNormalization
 from tensorflow.keras.layers import Conv1D, Conv2D
 from tensorflow.keras.layers import MaxPooling1D, MaxPooling2D
@@ -28,6 +28,8 @@ from tensorflow.keras.layers import Dropout
 from tensorflow.keras.layers import Dense
 from tensorflow.keras.layers import Input
 from tensorflow.keras.layers import Embedding
+from tensorflow.keras.layers import LSTM
+from tensorflow.keras.layers import Bidirectional
 
 from tensorflow.keras import backend as K
 
@@ -44,10 +46,11 @@ from joblib.externals.loky import get_reusable_executor
 
 class simplerKeras():
     
-    def __init__(self, X, y, gpu=False, workers=-3):        
+    def __init__(self, X, y, gpu=False, workers=-3, gpu_test=True):        
         self.release()
         self.gpu = gpu
         self.workers = workers
+        self.gpu_test = gpu_test
         self.check()
         self.loadData(X, y)
         if isinstance(X, pd.DataFrame) and isinstance(y, pd.DataFrame):
@@ -96,7 +99,8 @@ class simplerKeras():
                     self.workers = len(tf.config.list_physical_devices('GPU'))
                     print('Number of workers adjusted to fit the GPUs available')
                 print('Using %d GPU workers' % self.workers)
-                self.testGPU()
+                if self.gpu_test:
+                    self.testGPU()
         self.multicore = True if self.workers > 1 else False
         print('Multiprocessing status:', self.multicore)
         
@@ -156,18 +160,26 @@ class simplerKeras():
 
 class formatCallbackNotebook(Callback):
     
-    def __init__(self, epochs, start):
+    def __init__(self, epochs, start, report='', timeout=0):
         self.epochs = epochs
         self.start = start
+        self.report = report
+        self.timeout = timeout
         
     def on_epoch_end(self, epoch, logs):
         clear_output(wait=True)
-        eta = (self.epochs - epoch - 1) * (time.time() - self.start) / (epoch + 1)
+        elapsed = time.time() - self.start
+        eta = (self.epochs - epoch - 1) * (elapsed) / (epoch + 1)
         results = {}
         for k, v in logs.items():
             results.update({k: round(v, 3)})
-        message = '#Current: %d/%d (ETA: %d seg)' % (epoch+1, self.epochs, eta) + " Results: " + str(results)
-        display(HTML(message))
+        message = self.report
+        message += '\nCurrent epoch: %d/%d (ETA: %d seg)' % (epoch+1, self.epochs, eta) + "\nCurrent results: " + str(results)
+        if elapsed/60 > self.timeout and self.timeout > 0:
+            message += '\nTimed out after %d epochs' % epoch
+            self.model.stop_training = True
+        display(HTML(message.replace('\n','<br>')))
+
 
 
 
@@ -689,7 +701,6 @@ class EmbeddedFour:
         return model
 
 
-
 class EmbeddedFive:
 	
     @staticmethod
@@ -731,3 +742,79 @@ class EmbeddedFive:
         model.add(Dense(1, activation=last_act))
 
         return model
+
+
+
+class RecurrentOne:
+	
+    @staticmethod
+    def build(input_dim, output_dim, input_len, lstm_out, classes, reg, bidirectional=False, dropout=0.1, init="he_normal", last_act='softmax'):
+        model = Sequential()
+
+        model.add(Embedding(input_dim=input_dim, output_dim=output_dim, input_length=input_len,
+                            embeddings_initializer=init, activity_regularizer=reg))
+
+        model.add(LSTM(lstm_out))
+
+        model.add(Dense(classes, activation=last_act))
+
+        return model
+
+
+class RecurrentTwo:
+	
+    @staticmethod
+    def build(input_dim, output_dim, input_len, lstm_out, classes, reg, bidirectional=True, dropout=0.1, init="he_normal", last_act='softmax'):
+        model = Sequential()
+
+        model.add(Embedding(input_dim=input_dim, output_dim=output_dim, input_length=input_len,
+                            embeddings_initializer=init, activity_regularizer=reg))
+
+        model.add(Bidirectional(LSTM(lstm_out, return_sequences=True, dropout=dropout)))
+        model.add(Bidirectional(LSTM(lstm_out)))
+
+        model.add(Dense(classes, activation=last_act))
+
+        return model
+
+
+class RecurrentThree:
+	
+    @staticmethod
+    def build(input_dim, output_dim, input_len, lstm_out, classes, reg, bidirectional=False, dropout=0.1, init="he_normal", last_act='softmax'):
+        model = Sequential()
+
+        model.add(Embedding(input_dim=input_dim, output_dim=output_dim, input_length=input_len,
+                            embeddings_initializer=init, activity_regularizer=reg))
+
+        model.add(LSTM(lstm_out, return_sequences=True, dropout=dropout))
+        model.add(LSTM(lstm_out))
+
+        model.add(Dense(classes, activation=last_act))
+
+        return model
+
+
+class RecurrentFour:
+	
+    @staticmethod
+    def build(input_dim, output_dim, input_len, lstm_out, classes, reg, bidirectional=False, dropout=0.1, init="he_normal", last_act='softmax'):
+        model = Sequential()
+
+        model.add(Embedding(input_dim=input_dim, output_dim=output_dim, input_length=input_len,
+                            embeddings_initializer=init, activity_regularizer=reg))
+
+        if bidirectional:
+            model.add(Bidirectional(LSTM(lstm_out, return_sequences=True, dropout=0.1)))
+            model.add(Bidirectional(LSTM(lstm_out)))
+        else:
+            model.add(LSTM(lstm_out, return_sequences=True, dropout=dropout))
+            model.add(LSTM(lstm_out))
+
+        model.add(Dense(4*classes, activation='relu'))
+        model.add(Dropout(dropout))
+
+        model.add(Dense(classes, activation=last_act))
+
+        return model
+
