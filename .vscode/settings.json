@@ -1,5 +1,5 @@
 {
-    "python.pythonPath": "/home/lazarop/miniconda3/envs/tfgpu/bin/python",
+    "python.pythonPath": "D:\\Users\\T-Gamer\\miniconda3\\envs\\etl\\python.exe",
     "python.linting.pylintEnabled": true,
     "python.linting.enabled": true
 }
